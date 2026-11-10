@@ -8,10 +8,10 @@ The Wi-Fi of the **ESP32-S3** itself (the radio of the chip, not a second chip),
 
 The node is a network device like dmeth's and dmesphosted's: `read()` / `write()` are frames, `DMDRVI_IOCTL_NET_*` work as for any network
 driver and the Wi-Fi is dmdrvi's `DMDRVI_IOCTL_WIFI_*` (scan, connect, status, info), so the `wifi` tool, `wifid`, `networkd` and `dhcpc`
-of dmnet work with it as they are. The driver registers the interface (`wlan0`) with dmnetif itself.
+of dmnet work with it as they are. The driver registers the interface with dmnetif itself.
 
 ```
-radio --> libraries of Espressif (the image) --> dmespwifi (/dev/wlan0) --> dmnetif --> networkd, dhcpc, wifi, ...
+radio --> libraries of Espressif (the image) --> dmespwifi (/dev/dmespwifi0) --> dmnetif --> networkd, dhcpc, wifi, ...
 ```
 
 ## How it is built
@@ -54,22 +54,25 @@ dmod-boot writes the image with the firmware (`install-firmware`; `DMBOOT_ESP_WI
 ## Configuration
 
 ```ini
-[wlan0]
+[wifi]
 driver_name=dmespwifi
-interface=wlan0        ; the name of the interface (and of the node: /dev/wlan0)
+interface=wlan         ; the friendly name of the interface (the default)
 log_level=1            ; of the libraries: 0 errors, 1 warnings, 2 info, 3 debug, 4 verbose
 ;thread_priority=3     ; of the threads of the driver and of the libraries
 ```
+
+The node is numbered by dmdevfs: `/dev/dmespwifi0`. The interface is the friendly name and the number of the node - `wlan0` - or the
+next free number when another driver (dmesphosted) already has that name.
 
 The configuration of the Waveshare ESP32-S3-LCD-2.8 is [configs/board/esp32s3-lcd28/wifi.ini](configs/board/esp32s3-lcd28/wifi.ini).
 
 ## Use
 
 ```
-wifi scan
-wifi connect SSID PASSWORD      # or: wifi connect SSID -s  (asks for the password, saves the network for wifid)
-wifi status
-wifi info
+wifi -d /dev/dmespwifi0 scan
+wifi -d /dev/dmespwifi0 connect SSID PASSWORD      # or: ... connect SSID -s  (asks for the password, saves the network for wifid)
+wifi -d /dev/dmespwifi0 status
+wifi -d /dev/dmespwifi0 info
 ```
 
 ## The log

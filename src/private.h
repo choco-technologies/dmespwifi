@@ -26,7 +26,8 @@
 #define DMESPWIFI_FRAME_MAX             1600u           /* an 802.3 frame (1500 of data) and what the radio adds */
 #define DMESPWIFI_RX_FRAMES             16u
 #define DMESPWIFI_READ_TIMEOUT_MS       50
-#define DMESPWIFI_DEFAULT_IFACE         "wlan0"
+#define DMESPWIFI_DEFAULT_IFACE         "wlan"          /* the friendly name: the interface is <name><number> */
+#define DMESPWIFI_IFACE_NUMBERS          8u              /* how many numbers are tried when the name is taken */
 #define DMESPWIFI_DEFAULT_PRIORITY      3
 #define DMESPWIFI_LOG_SIZE              4096u
 
@@ -40,7 +41,8 @@ struct dmdrvi_context
 {
     uint32_t                magic;
     dmosi_mutex_t           lock;               /* the fields below */
-    char *                  iface_name;
+    char *                  iface_name;         /* the friendly name ("wlan"): the interface is <name><number> */
+    unsigned                major;              /* the number of the node */
     char *                  node_path;
     void *                  iface;              /* the dmnetif interface */
     int                     priority;           /* of the threads of the driver */

@@ -1,6 +1,6 @@
 # dmespwifi API Reference
 
-The module is a driver: it is used through its node (`/dev/wlan0`), not through functions.
+The module is a driver: it is used through its node (`/dev/dmespwifi0`), not through functions.
 
 ## The node
 

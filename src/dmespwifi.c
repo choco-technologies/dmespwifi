@@ -28,14 +28,26 @@ static void iface_ensure(struct dmdrvi_context *c)
     dmosi_mutex_unlock(c->lock);
     if (path == NULL)
         return;
-    void *iface = dmnetif_register(c->iface_name, path);
+    /* The name of the interface: the friendly name of the configuration and a number. The number is the one of the node (/dev/dmespwifi<major>);
+     * when another driver already has that name (e.g. dmesphosted's wlan0), the next free one */
+    char name[DMNETIF_NAME_MAX_LEN + 1];
+    void *iface = NULL;
+    for (unsigned number = c->major; number < c->major + DMESPWIFI_IFACE_NUMBERS; number++)
+    {
+        if (Dmod_SnPrintf(name, sizeof(name), "%s%u", c->iface_name, number) >= (int) sizeof(name))
+            break;
+        if (dmnetif_find_by_name(name) != NULL)
+            continue;
+        iface = dmnetif_register(name, path);
+        break;
+    }
     if (iface == NULL)
     {
-        DMOD_LOG_ERROR("dmespwifi: failed to register %s (%s) with dmnetif\n", c->iface_name, path);
+        DMOD_LOG_ERROR("dmespwifi: failed to register %s<n> (%s) with dmnetif\n", c->iface_name, path);
     }
     else
     {
-        DMOD_LOG_INFO("dmespwifi: registered %s -> %s with dmnetif\n", c->iface_name, path);
+        DMOD_LOG_INFO("dmespwifi: registered %s -> %s with dmnetif\n", name, path);
         dmosi_mutex_lock(c->lock);
         c->iface = iface;
         dmosi_mutex_unlock(c->lock);
@@ -71,17 +83,10 @@ static int read_config(struct dmdrvi_context *c, dmini_context_t ini)
     return 0;
 }
 
-static void fill_dev_num(dmini_context_t ini, dmdrvi_dev_num_t *dev_num)
+/* The node is numbered by dmdevfs: /dev/dmespwifi<major>. There is one radio, so the major is 0 */
+static void fill_dev_num(dmdrvi_dev_num_t *dev_num)
 {
-    const char *section = dmini_section_name(ini, 0);
-
     memset(dev_num, 0, sizeof(*dev_num));
-    if (section != NULL && section[0] != '\0' && strlen(section) <= DMDRVI_ALT_NAME_MAX_LEN)
-    {
-        dev_num->flags = DMDRVI_NUM_ALT_NAME;
-        memcpy(dev_num->alt_name, section, strlen(section) + 1);
-        return;
-    }
     dev_num->flags = DMDRVI_NUM_MAJOR;
     dev_num->major = 0;
 }
@@ -155,7 +160,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, dmdrvi_context_t, _create, ( dmi
         destroy_context(c);
         return NULL;
     }
-    fill_dev_num(config, dev_num);
+    fill_dev_num(dev_num);
     return c;
 }
 
@@ -167,7 +172,6 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, void, _free, ( dmdrvi_context_t 
 
 dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, void, _path_ready, ( dmdrvi_context_t context, const dmdrvi_dev_num_t *dev_num, const char *path ))
 {
-    (void) dev_num;
     if (!is_valid_context(context) || path == NULL)
         return;
     char *copy = Dmod_StrDup(path);
@@ -176,6 +180,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, void, _path_ready, ( dmdrvi_cont
     dmosi_mutex_lock(context->lock);
     Dmod_Free(context->node_path);
     context->node_path = copy;
+    context->major = (dev_num != NULL) ? dev_num->major : 0;
     dmosi_mutex_unlock(context->lock);
     iface_ensure(context);
 }
