@@ -1,6 +1,6 @@
 # dmespwifi
 
-[![License](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![CI](https://github.com/choco-technologies/dmespwifi/actions/workflows/ci.yml/badge.svg)](https://github.com/choco-technologies/dmespwifi/actions/workflows/ci.yml)
 
 The Wi-Fi of the **ESP32-S3** itself (the radio of the chip, not a second chip), as a network node of dmod: a station that scans, connects
@@ -85,4 +85,4 @@ when the console is gone. No password and no key is ever written to it.
 
 ## License
 
-Apache 2.0, see [LICENSE](LICENSE). The libraries in the image are Espressif's (ESP-IDF, Apache 2.0).
+MIT, see [LICENSE](LICENSE). The libraries in the image are Espressif's (ESP-IDF, Apache 2.0).
