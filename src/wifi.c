@@ -111,6 +111,11 @@ static void trace_frame(const char *dir, const uint8_t *f, size_t len, int32_t r
                   f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], f[10], f[11], f[26], f[27], f[28], f[29], f[30], f[31], f[32], f[33], f[52], f[53], f[42]);
     if (dport == 67u && len > 282u)
     {
+        char hdr[130];
+        size_t h = 0;
+        for (size_t i = 0; i < 62u; i++)
+            h += (size_t) Dmod_SnPrintf(hdr + h, sizeof(hdr) - h, "%02x", f[i]);
+        radio_log("net: dhcp header %s\n", hdr);
         char opts[120];
         size_t n = 0;
         for (size_t i = 282u; i < len && n + 3u < sizeof(opts); i++)
@@ -162,15 +167,20 @@ int wifi_send_frame(struct dmdrvi_context *c, const void *frame, size_t size)
     dmosi_mutex_lock(c->lock);
     bool can = c->running && c->state == DMDRVI_WIFI_STATE_CONNECTED;
     dmosi_mutex_unlock(c->lock);
+    uint8_t padded[350];
+    const void *out = frame;
+    size_t out_size = size;
+    const uint8_t *fr = frame;
+    if (size >= 42u && size < sizeof(padded) && fr[12] == 0x08 && fr[13] == 0x00 && fr[23] == 17u && fr[36] == 0 && fr[37] == 67u)
     {
-        const uint8_t *fr = frame;
-        if (size >= 32u && fr[12] == 0x08 && fr[13] == 0x06 && fr[28] == 0 && fr[29] == 0 && fr[30] == 0 && fr[31] == 0)
-        {
-            radio_log("net: ARP probe dropped (experiment)\n");
-            return 0;
-        }
+        memcpy(padded, frame, size);                /* a DHCP request is padded to the BOOTP minimum (lwIP does it too): 350 bytes */
+        memset(padded + size, 0, sizeof(padded) - size);
+        out = padded;
+        out_size = sizeof(padded);
     }
-    int32_t ret = can ? g_api->esp_wifi_internal_tx(WIFI_IF_STA, (void *) frame, (uint16_t) size) : -1;
+    uint32_t q0 = g_osi_queue_sent, s0 = g_osi_sem_gave;
+    int32_t ret = can ? g_api->esp_wifi_internal_tx(WIFI_IF_STA, (void *) out, (uint16_t) out_size) : -1;
+    radio_log("net: tx posted queue %u sem %u\n", (unsigned) (g_osi_queue_sent - q0), (unsigned) (g_osi_sem_gave - s0));
     trace_frame(can ? "tx" : "tx (link down)", frame, size, ret);
     dmosi_mutex_lock(c->lock);
     if (ret == 0)

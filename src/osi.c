@@ -545,63 +545,134 @@ static int32_t osi_task_max_priority(void)
     return (g_ctx != NULL) ? g_ctx->priority + 2 : DMESPWIFI_DEFAULT_PRIORITY + 2;   /* the libraries take a place below the top of it */
 }
 
-/* ---- timers: the ETSTimer of the libraries over dmosi's timers ---- */
+/* ---- timers: the ETSTimer of the libraries, kept in a list of our own and run by a thread of our own ----
+ *
+ * Not the timers of dmosi: those are commands in the queue of the timer task of FreeRTOS, and the libraries arm timers from their timer
+ * callbacks (several at once) and with their locks held - the queue fills up, the timer task waits for itself and everything that arms a
+ * timer after it (the task of the Wi-Fi) waits for ever. Here arming is a change of a list, like in the esp_timer of ESP-IDF. */
 
-typedef struct
+typedef struct ets_timer
 {
-    void *handle;           /* timer_next: our timer */
-    uint32_t expire;
-    uint32_t period;
+    struct ets_timer *next;         /* in g_timers (sorted by `expire`), NULL when it is not armed or the last one */
+    uint32_t expire;                /* ms of radio_time_us(), wraps */
+    uint32_t period;                /* ms, 0: once */
     void (*func)(void *);
     void *arg;
 } ets_timer_t;
 
 volatile uint32_t g_osi_timer_armed, g_osi_timer_fired, g_osi_timer_created, g_osi_timer_create_failed;
 
-static void ets_timer_call(void *arg)
+static ets_timer_t *g_timers;
+static dmosi_semaphore_t g_timer_wake;
+static dmosi_thread_t g_timer_thread;
+
+static inline uint32_t timer_now(void)
 {
-    ets_timer_t *timer = arg;
-    g_osi_timer_fired++;
-    radio_log("timer: fire %p fn %p\n", (void *) timer, (void *) timer->func);
-    if (timer->func != NULL)
-        timer->func(timer->arg);
+    return (uint32_t) (radio_time_us() / 1000u);
 }
 
-/* `expire` keeps whether the timer repeats (dmosi decides it when the timer is created) */
+/* (interrupts off) */
+static void timer_unlink(ets_timer_t *timer)
+{
+    for (ets_timer_t **at = &g_timers; *at != NULL; at = &(*at)->next)
+    {
+        if (*at == timer)
+        {
+            *at = timer->next;
+            break;
+        }
+    }
+    timer->next = NULL;
+}
+
+/* (interrupts off) true: it is the first to expire now */
+static bool timer_link(ets_timer_t *timer)
+{
+    ets_timer_t **at = &g_timers;
+    while (*at != NULL && (int32_t) ((*at)->expire - timer->expire) <= 0)
+        at = &(*at)->next;
+    timer->next = *at;
+    *at = timer;
+    return at == &g_timers;
+}
+
+static void timer_main(void *arg)
+{
+    (void) arg;
+    for (;;)
+    {
+        int32_t wait = 1000;
+        uint32_t ps = cpu_irq_disable();
+        for (;;)
+        {
+            ets_timer_t *timer = g_timers;
+            if (timer == NULL)
+                break;
+            int32_t left = (int32_t) (timer->expire - timer_now());
+            if (left > 0)
+            {
+                wait = left < wait ? left : wait;
+                break;
+            }
+            g_timers = timer->next;
+            timer->next = NULL;
+            if (timer->period != 0)
+            {
+                timer->expire += timer->period;
+                if ((int32_t) (timer->expire - timer_now()) <= 0)
+                    timer->expire = timer_now() + timer->period;
+                timer_link(timer);
+            }
+            void (*func)(void *) = timer->func;
+            void *func_arg = timer->arg;
+            cpu_irq_restore(ps);
+            g_osi_timer_fired++;
+            if (func != NULL)
+                func(func_arg);
+            ps = cpu_irq_disable();
+        }
+        cpu_irq_restore(ps);
+        dmosi_semaphore_wait(g_timer_wake, 1, wait);
+    }
+}
+
+static bool timer_init(void)
+{
+    if (g_timer_thread != NULL)
+        return true;
+    if (g_timer_wake == NULL)
+        g_timer_wake = dmosi_semaphore_create(0, 1);
+    if (g_timer_wake == NULL)
+        return false;
+    g_timer_thread = dmosi_thread_create(timer_main, NULL, (g_ctx != NULL) ? g_ctx->priority : DMESPWIFI_DEFAULT_PRIORITY, 8192,
+                                         "wifi-timer", (g_ctx != NULL) ? g_ctx->process : NULL);
+    return g_timer_thread != NULL;
+}
+
 static void osi_timer_setfn(void *ptimer, void *func, void *arg)
 {
     ets_timer_t *timer = ptimer;
+    uint32_t ps = cpu_irq_disable();
+    timer_unlink(timer);
     timer->func = (void (*)(void *)) func;
     timer->arg = arg;
+    cpu_irq_restore(ps);
 }
 
 static void osi_timer_arm_ms(void *ptimer, uint32_t ms, bool repeat)
 {
     ets_timer_t *timer = ptimer;
+    if (ms == 0)
+        ms = 1;
     g_osi_timer_armed++;
-    radio_log("timer: arm %p fn %p %u ms %s\n", ptimer, (void *) timer->func, (unsigned) ms, repeat ? "repeat" : "once");
-    if (timer->handle != NULL && timer->expire != (uint32_t) repeat)
-    {
-        dmosi_timer_destroy(timer->handle);
-        timer->handle = NULL;
-    }
-    if (timer->handle == NULL)
-    {
-        timer->handle = dmosi_timer_create(ets_timer_call, timer, ms == 0 ? 1 : ms, repeat);
-        timer->expire = (uint32_t) repeat;
-        g_osi_timer_created++;
-        if (timer->handle == NULL)
-        {
-            g_osi_timer_create_failed++;
-            return;
-        }
-    }
-    else
-    {
-        dmosi_timer_stop(timer->handle);
-        dmosi_timer_set_period(timer->handle, ms == 0 ? 1 : ms);
-    }
-    dmosi_timer_start(timer->handle);
+    uint32_t ps = cpu_irq_disable();
+    timer_unlink(timer);
+    timer->expire = timer_now() + ms;
+    timer->period = repeat ? ms : 0;
+    bool first = timer_link(timer);
+    cpu_irq_restore(ps);
+    if (first && g_timer_wake != NULL)
+        dmosi_semaphore_post(g_timer_wake, 1);
 }
 
 static void osi_timer_arm(void *ptimer, uint32_t ms, bool repeat)
@@ -616,19 +687,14 @@ static void osi_timer_arm_us(void *ptimer, uint32_t us, bool repeat)
 
 static void osi_timer_disarm(void *ptimer)
 {
-    ets_timer_t *timer = ptimer;
-    if (timer->handle != NULL)
-        dmosi_timer_stop(timer->handle);
+    uint32_t ps = cpu_irq_disable();
+    timer_unlink(ptimer);
+    cpu_irq_restore(ps);
 }
 
 static void osi_timer_done(void *ptimer)
 {
-    ets_timer_t *timer = ptimer;
-    if (timer->handle != NULL)
-    {
-        dmosi_timer_destroy(timer->handle);
-        timer->handle = NULL;
-    }
+    osi_timer_disarm(ptimer);
 }
 
 /* ---- the pool: internal RAM only for the radio (the MAC reaches its buffers by DMA; the heaps of the firmware are used up by then) ---- */
@@ -883,6 +949,7 @@ static void osi_log_write(unsigned int level, const char *tag, const char *forma
 void osi_fill(wifi_osi_funcs_t *o)
 {
     memset(o, 0, sizeof(*o));
+    timer_init();
     o->_version = ESP_WIFI_OS_ADAPTER_VERSION;
     o->_env_is_chip = osi_env_is_chip;
     o->_set_intr = osi_set_intr;
