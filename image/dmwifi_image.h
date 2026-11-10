@@ -40,7 +40,14 @@ typedef struct
     void    (*phy_param_track_tot)(bool wifi, bool ble_154);
     int32_t (*esp_wifi_internal_set_log_level)(int level);
     int32_t (*supplicant_init)(void);                   /* registers the supplicant (the WPA/RSN parser: a scan needs it) after esp_wifi_init_internal */
-    void    (*phy_bbpll_en_usb)(bool enable);       /* PHY init disables the USB PHY (the USB-Serial-JTAG) unless this is called with true first */
+    void    (*phy_bbpll_en_usb)(bool enable);
+    int32_t (*esp_wifi_set_country)(const wifi_country_t *country);
+    int32_t (*esp_wifi_set_ps)(int type);
+    int32_t (*esp_wifi_statis_dump)(uint32_t modules);
+    int32_t (*esp_wifi_set_promiscuous)(bool enable);
+    int32_t (*esp_wifi_set_promiscuous_rx_cb)(void (*callback)(void *buffer, int type));
+    int32_t (*esp_wifi_set_promiscuous_filter)(const uint32_t *filter);
+    const void *crypto_funcs;                           /* the table of the cryptography for the init config (wpa_crypto_funcs_t) */       /* PHY init disables the USB PHY (the USB-Serial-JTAG) unless this is called with true first */
 } dmwifi_image_api_t;
 
 typedef struct

@@ -22,7 +22,7 @@
 #define DMESPWIFI_READ_TIMEOUT_MS       50
 #define DMESPWIFI_DEFAULT_IFACE         "wlan0"
 #define DMESPWIFI_DEFAULT_PRIORITY      3
-#define DMESPWIFI_LOG_SIZE              6144u
+#define DMESPWIFI_LOG_SIZE              12288u
 
 typedef struct
 {
@@ -83,6 +83,8 @@ bool  image_load(void);
 void  osi_fill(wifi_osi_funcs_t *osi);
 int   osi_isr_dispatch(int line);
 void  osi_isr_stats(char *out, size_t size);
+extern volatile uint32_t g_osi_fail_sem_give, g_osi_fail_queue_send, g_osi_queue_sent, g_osi_sem_gave;
+extern volatile uint32_t g_osi_timer_armed, g_osi_timer_fired, g_osi_timer_created, g_osi_timer_create_failed;
 void  osi_task_stats(uint32_t *count, uint32_t *total_kb, uint32_t *peak_kb);
 void *osi_pool_alloc(size_t size);
 uint32_t osi_pool_stats(uint32_t *largest);

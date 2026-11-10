@@ -139,6 +139,29 @@ static void osi_yield_from_isr(void)
     /* dmosi yields by itself when a call from an interrupt wakes something */
 }
 
+/* where the threads block (a table at the end of the pool - JTAG reads it when something hangs): thread, what, on what, count */
+typedef struct { uint32_t thread, op, obj, count; } blk_t;
+#define BLK_TABLE   ((volatile blk_t *) (0x3fce0000u - 64u))
+#define BLK_SLOTS   4
+static volatile dmosi_thread_t g_wifi_task_thread;
+static volatile blk_t *blk_slot(void)
+{
+    uint32_t me = (uint32_t) dmosi_thread_current();
+    for (int i = 0; i < BLK_SLOTS; i++)
+    {
+        if (BLK_TABLE[i].thread == me)
+            return &BLK_TABLE[i];
+        if (BLK_TABLE[i].thread == 0)
+        {
+            BLK_TABLE[i].thread = me;
+            return &BLK_TABLE[i];
+        }
+    }
+    return &BLK_TABLE[BLK_SLOTS - 1];
+}
+#define BLK_ENTER(id, ob) volatile blk_t *blk_me = blk_slot(); blk_me->op = (id); blk_me->obj = (uint32_t) (ob); blk_me->count++;
+#define BLK_LEAVE()       blk_me->op = 0;
+
 /* ---- semaphores, mutexes ---- */
 
 static void *osi_semphr_create(uint32_t max, uint32_t init)
@@ -153,12 +176,21 @@ static void osi_semphr_delete(void *s)
 
 static int32_t osi_semphr_take(void *s, uint32_t ticks)
 {
-    return dmosi_semaphore_wait(s, 1, timeout_ms(ticks)) == 0 ? 1 : 0;
+    BLK_ENTER(2, s);
+    int r = dmosi_semaphore_wait(s, 1, timeout_ms(ticks));
+    BLK_LEAVE();
+    return r == 0 ? 1 : 0;
 }
+
+volatile uint32_t g_osi_fail_sem_give, g_osi_fail_queue_send, g_osi_queue_sent, g_osi_sem_gave;
 
 static int32_t osi_semphr_give(void *s)
 {
-    return dmosi_semaphore_post(s, 1) == 0 ? 1 : 0;
+    int r = dmosi_semaphore_post(s, 1);
+    g_osi_sem_gave++;
+    if (r != 0)
+        g_osi_fail_sem_give++;
+    return r == 0 ? 1 : 0;
 }
 
 /* a semaphore of every thread that asks (a few threads only) */
@@ -194,7 +226,7 @@ static void *osi_thread_semphr_get(void)
 
 static void *osi_mutex_create(void)
 {
-    return dmosi_mutex_create(false);
+    return dmosi_mutex_create(true);
 }
 
 static void *osi_recursive_mutex_create(void)
@@ -209,7 +241,10 @@ static void osi_mutex_delete(void *m)
 
 static int32_t osi_mutex_lock(void *m)
 {
-    return dmosi_mutex_lock(m) == 0 ? 1 : 0;
+    BLK_ENTER(3, m);
+    int r = dmosi_mutex_lock(m);
+    BLK_LEAVE();
+    return r == 0 ? 1 : 0;
 }
 
 static int32_t osi_mutex_unlock(void *m)
@@ -253,8 +288,12 @@ static void osi_queue_delete(void *queue)
 static int32_t osi_queue_send(void *queue, void *item, uint32_t ticks)
 {
     osi_queue_t *q = queue;
+    g_osi_queue_sent++;
     if (dmosi_queue_send(q->queue, item, timeout_ms(ticks)) != 0)
+    {
+        g_osi_fail_queue_send++;
         return 0;
+    }
     uint32_t ps = cpu_irq_disable();
     q->waiting++;
     cpu_irq_restore(ps);
@@ -271,7 +310,10 @@ static int32_t osi_queue_send_from_isr(void *queue, void *item, void *woken)
 static int32_t osi_queue_recv(void *queue, void *item, uint32_t ticks)
 {
     osi_queue_t *q = queue;
-    if (dmosi_queue_receive(q->queue, item, timeout_ms(ticks)) != 0)
+    BLK_ENTER(1, q);
+    int r = dmosi_queue_receive(q->queue, item, timeout_ms(ticks));
+    BLK_LEAVE();
+    if (r != 0)
         return 0;
     uint32_t ps = cpu_irq_disable();
     if (q->waiting > 0)
@@ -374,6 +416,7 @@ static uint32_t osi_event_group_wait(void *event, uint32_t bits, int clear, int 
 {
     osi_event_t *e = event;
     uint32_t waited = 0;
+    BLK_ENTER(5, e);
     for (;;)
     {
         dmosi_mutex_lock(e->lock);
@@ -383,7 +426,10 @@ static uint32_t osi_event_group_wait(void *event, uint32_t bits, int clear, int 
             e->bits &= ~bits;
         dmosi_mutex_unlock(e->lock);
         if (met || (ticks != TICKS_FOREVER && waited >= ticks))
+        {
+            BLK_LEAVE();
             return now;
+        }
         dmosi_thread_sleep(5);
         waited += 5;
     }
@@ -437,6 +483,7 @@ static int32_t osi_task_create(void *entry, const char *name, uint32_t stack_byt
     task->entry = (void (*)(void *)) entry;
     task->param = param;
     task->thread = dmosi_thread_create(osi_task_main, task, prio, bytes, name, (g_ctx != NULL) ? g_ctx->process : NULL);
+
     if (task->thread == NULL)
     {
         Dmod_Free(task);
@@ -471,7 +518,9 @@ static void osi_task_delete(void *handle)
 
 static void osi_task_delay(uint32_t ticks)
 {
+    BLK_ENTER(4, ticks);
     dmosi_thread_sleep(ticks);
+    BLK_LEAVE();
 }
 
 static int32_t osi_task_ms_to_tick(uint32_t ms)
@@ -479,9 +528,16 @@ static int32_t osi_task_ms_to_tick(uint32_t ms)
     return (int32_t) ms;
 }
 
+/* the handle of a task is what task_create gave back (the libraries compare the two to see that they run in the task of the Wi-Fi) */
 static void *osi_task_current(void)
 {
-    return dmosi_thread_current();
+    dmosi_thread_t current = dmosi_thread_current();
+    for (int i = 0; i < TASKS_KEPT; i++)
+    {
+        if (g_tasks[i] != NULL && g_tasks[i]->thread == current)
+            return g_tasks[i];
+    }
+    return current;
 }
 
 static int32_t osi_task_max_priority(void)
@@ -500,9 +556,13 @@ typedef struct
     void *arg;
 } ets_timer_t;
 
+volatile uint32_t g_osi_timer_armed, g_osi_timer_fired, g_osi_timer_created, g_osi_timer_create_failed;
+
 static void ets_timer_call(void *arg)
 {
     ets_timer_t *timer = arg;
+    g_osi_timer_fired++;
+    radio_log("timer: fire %p fn %p\n", (void *) timer, (void *) timer->func);
     if (timer->func != NULL)
         timer->func(timer->arg);
 }
@@ -518,6 +578,8 @@ static void osi_timer_setfn(void *ptimer, void *func, void *arg)
 static void osi_timer_arm_ms(void *ptimer, uint32_t ms, bool repeat)
 {
     ets_timer_t *timer = ptimer;
+    g_osi_timer_armed++;
+    radio_log("timer: arm %p fn %p %u ms %s\n", ptimer, (void *) timer->func, (unsigned) ms, repeat ? "repeat" : "once");
     if (timer->handle != NULL && timer->expire != (uint32_t) repeat)
     {
         dmosi_timer_destroy(timer->handle);
@@ -527,8 +589,12 @@ static void osi_timer_arm_ms(void *ptimer, uint32_t ms, bool repeat)
     {
         timer->handle = dmosi_timer_create(ets_timer_call, timer, ms == 0 ? 1 : ms, repeat);
         timer->expire = (uint32_t) repeat;
+        g_osi_timer_created++;
         if (timer->handle == NULL)
+        {
+            g_osi_timer_create_failed++;
             return;
+        }
     }
     else
     {
@@ -568,7 +634,7 @@ static void osi_timer_done(void *ptimer)
 /* ---- the pool: internal RAM only for the radio (the MAC reaches its buffers by DMA; the heaps of the firmware are used up by then) ---- */
 
 #define POOL_BASE       0x3fcd0000u         /* behind the DMA heap of dmod-boot; 0x3fcd0000..0x3fce0000 is nobody else's */
-#define POOL_SIZE       0x10000u
+#define POOL_SIZE       0xFFC0u
 #define POOL_ALIGN      16u
 
 typedef struct pool_block { uint32_t size; uint32_t used; } pool_block_t;   /* 8 bytes + 8 of padding: the data is 16-aligned */
@@ -907,10 +973,10 @@ void osi_fill(wifi_osi_funcs_t *o)
     o->_realloc_internal = osi_realloc;
     o->_calloc_internal = osi_internal_calloc;
     o->_zalloc_internal = osi_internal_zalloc;
-    o->_wifi_malloc = osi_malloc;
+    o->_wifi_malloc = osi_internal_malloc;
     o->_wifi_realloc = osi_realloc;
-    o->_wifi_calloc = osi_calloc;
-    o->_wifi_zalloc = osi_zalloc;
+    o->_wifi_calloc = osi_internal_calloc;
+    o->_wifi_zalloc = osi_internal_zalloc;
     o->_wifi_create_queue = osi_wifi_create_queue;
     o->_wifi_delete_queue = osi_wifi_delete_queue;
     /* no coexistence (no Bluetooth): the calls agree */
