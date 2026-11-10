@@ -47,7 +47,7 @@ static volatile uint32_t g_log_len;
 void radio_log_init(void)
 {
     if (g_log == NULL)
-        g_log = Dmod_MallocTagged("dma,main", DMESPWIFI_LOG_SIZE);
+        g_log = osi_pool_alloc(DMESPWIFI_LOG_SIZE);
     if (g_log == NULL)
         return;
     g_log[0] = '\0';

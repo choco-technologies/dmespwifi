@@ -13,3 +13,7 @@ build/
 *.tmp
 *.swp
 *~
+image/obj/
+image/*.elf
+image/*.map
+image/*.bin

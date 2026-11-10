@@ -9,7 +9,7 @@
 
 struct dmdrvi_context *g_ctx;
 
-static wifi_osi_funcs_t g_osi;      /* the libraries keep the pointer */
+wifi_osi_funcs_t g_osi;             /* the libraries keep the pointer (and the supplicant of the image copies the table) */
 static wifi_init_config_t g_config;
 
 #define RECONNECT_DELAY_MS      2000

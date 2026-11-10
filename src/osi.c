@@ -637,6 +637,11 @@ static void pool_free(void *p)
     }
 }
 
+void *osi_pool_alloc(size_t size)
+{
+    return pool_alloc(size);
+}
+
 uint32_t osi_pool_stats(uint32_t *largest)
 {
     uint32_t total = 0, big = 0, pos = 0;

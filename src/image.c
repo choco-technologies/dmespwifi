@@ -21,7 +21,7 @@ static int host_vprintf(const char *format, va_list args)
     return n;
 }
 
-static const dmwifi_host_t g_host = { .free = host_free, .vprintf = host_vprintf };
+static const dmwifi_host_t g_host = { .free = host_free, .osi = &g_osi, .vprintf = host_vprintf };
 
 bool image_load(void)
 {

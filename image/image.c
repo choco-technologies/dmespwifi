@@ -22,7 +22,8 @@ extern char *  get_phy_version_str(void);
 extern void    phy_param_track_tot(bool, bool);
 extern int32_t esp_wifi_internal_set_log_level(int);
 extern void    phy_bbpll_en_usb(bool);
-extern int32_t dmwifi_supplicant_init(void);       /* wpa_ie.c */
+extern int32_t esp_supplicant_init(void);
+extern wifi_osi_funcs_t g_wifi_osi_funcs;
 
 extern uint32_t _data_load_d, _data_start, _data_size, _bss_start, _bss_size, _ram_end, _image_size;   /* (image.ld) */
 
@@ -117,25 +118,11 @@ int sprintf(char *buffer, const char *format, ...)
     return (int)(out - buffer);
 }
 
-/* hexstr2bin of hostap (utils/common.c): two hex digits to a byte; -1 for anything else */
-static int hex2num(char c)
+/* the supplicant of hostap (supp/): the libraries call it through the table that esp_supplicant_init() registers */
+static int32_t supplicant_start(void)
 {
-    if (c >= '0' && c <= '9') return c - '0';
-    if (c >= 'a' && c <= 'f') return c - 'a' + 10;
-    if (c >= 'A' && c <= 'F') return c - 'A' + 10;
-    return -1;
-}
-
-int hexstr2bin(const char *hex, uint8_t *buffer, size_t length)
-{
-    for (size_t i = 0; i < length; i++)
-    {
-        int a = hex2num(*hex++), b = (a < 0) ? -1 : hex2num(*hex++);
-        if (a < 0 || b < 0)
-            return -1;
-        buffer[i] = (uint8_t)((a << 4) | b);
-    }
-    return 0;
+    g_wifi_osi_funcs = *g_host->osi;
+    return esp_supplicant_init();
 }
 
 static void image_init(const dmwifi_host_t *host)
@@ -161,6 +148,6 @@ const dmwifi_image_header_t dmwifi_image_header =
         esp_wifi_init_internal, esp_wifi_deinit_internal, esp_wifi_start, esp_wifi_stop, esp_wifi_set_mode, esp_wifi_scan_start,
         esp_wifi_scan_get_ap_num, esp_wifi_scan_get_ap_records, esp_wifi_connect, esp_wifi_disconnect, esp_wifi_set_config,
         esp_wifi_get_mac, esp_wifi_internal_tx, esp_wifi_internal_reg_rxcb, esp_wifi_internal_free_rx_buffer, register_chipv7_phy,
-        get_phy_version_str, phy_param_track_tot, esp_wifi_internal_set_log_level, dmwifi_supplicant_init, phy_bbpll_en_usb,
+        get_phy_version_str, phy_param_track_tot, esp_wifi_internal_set_log_level, supplicant_start, phy_bbpll_en_usb,
     },
 };

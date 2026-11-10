@@ -22,7 +22,7 @@
 #define DMESPWIFI_READ_TIMEOUT_MS       50
 #define DMESPWIFI_DEFAULT_IFACE         "wlan0"
 #define DMESPWIFI_DEFAULT_PRIORITY      3
-#define DMESPWIFI_LOG_SIZE              8192u
+#define DMESPWIFI_LOG_SIZE              6144u
 
 typedef struct
 {
@@ -70,6 +70,7 @@ struct dmdrvi_context
 
 extern struct dmdrvi_context *  g_ctx;          /* one radio: the libraries' callbacks have no context */
 extern const dmwifi_image_api_t * g_api;
+extern wifi_osi_funcs_t g_osi;
 
 /* ---- log: dmlog and a ring of our own (its address in RTC_CNTL_STORE5: JTAG finds it, no secret goes in) ---- */
 void  radio_log(const char *format, ...);
@@ -83,6 +84,7 @@ void  osi_fill(wifi_osi_funcs_t *osi);
 int   osi_isr_dispatch(int line);
 void  osi_isr_stats(char *out, size_t size);
 void  osi_task_stats(uint32_t *count, uint32_t *total_kb, uint32_t *peak_kb);
+void *osi_pool_alloc(size_t size);
 uint32_t osi_pool_stats(uint32_t *largest);
 void  osi_alloc_stats(uint32_t *ok, uint32_t *bad, uint32_t *bad_bytes);
 

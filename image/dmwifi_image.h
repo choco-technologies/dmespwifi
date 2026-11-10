@@ -13,6 +13,7 @@
 typedef struct
 {
     void (*free)(void *ptr);
+    const wifi_osi_funcs_t *osi;                            /* the table the libraries get (filled before supplicant_init is called) */
     int  (*vprintf)(const char *format, va_list args);      /* the log of the libraries */
 } dmwifi_host_t;
 
