@@ -58,8 +58,6 @@ typedef struct
 } isr_t;
 
 static isr_t g_isr[LINES];
-static volatile uint32_t g_isr_calls[LINES];     /* for the log: how many times the libraries' handlers ran (the interrupts reach them) */
-static volatile int32_t g_isr_registered[LINES];
 
 static void osi_set_intr(int32_t cpu, uint32_t source, uint32_t number, int32_t priority)
 {
@@ -73,26 +71,12 @@ static void osi_set_isr(int32_t n, void *f, void *arg)
     {
         g_isr[n].arg = arg;
         g_isr[n].handler = (void (*)(void *)) f;
-        g_isr_registered[n] = 1;
-    }
-}
-
-/* "line:calls" of the lines the libraries took, for the log */
-void osi_isr_stats(char *out, size_t size)
-{
-    size_t at = 0;
-    out[0] = '\0';
-    for (int i = 0; i < LINES && at + 16 < size; i++)
-    {
-        if (g_isr_registered[i])
-            at += (size_t) Dmod_SnPrintf(out + at, size - at, " %d:%u", i, (unsigned) g_isr_calls[i]);
     }
 }
 
 int osi_isr_dispatch(int line)
 {
     isr_t *isr = &g_isr[line];
-    g_isr_calls[line]++;
     if (isr->handler != NULL)
         isr->handler(isr->arg);
     return 0;
@@ -139,29 +123,6 @@ static void osi_yield_from_isr(void)
     /* dmosi yields by itself when a call from an interrupt wakes something */
 }
 
-/* where the threads block (a table at the end of the pool - JTAG reads it when something hangs): thread, what, on what, count */
-typedef struct { uint32_t thread, op, obj, count; } blk_t;
-#define BLK_TABLE   ((volatile blk_t *) (0x3fce0000u - 64u))
-#define BLK_SLOTS   4
-static volatile dmosi_thread_t g_wifi_task_thread;
-static volatile blk_t *blk_slot(void)
-{
-    uint32_t me = (uint32_t) dmosi_thread_current();
-    for (int i = 0; i < BLK_SLOTS; i++)
-    {
-        if (BLK_TABLE[i].thread == me)
-            return &BLK_TABLE[i];
-        if (BLK_TABLE[i].thread == 0)
-        {
-            BLK_TABLE[i].thread = me;
-            return &BLK_TABLE[i];
-        }
-    }
-    return &BLK_TABLE[BLK_SLOTS - 1];
-}
-#define BLK_ENTER(id, ob) volatile blk_t *blk_me = blk_slot(); blk_me->op = (id); blk_me->obj = (uint32_t) (ob); blk_me->count++;
-#define BLK_LEAVE()       blk_me->op = 0;
-
 /* ---- semaphores, mutexes ---- */
 
 static void *osi_semphr_create(uint32_t max, uint32_t init)
@@ -176,21 +137,13 @@ static void osi_semphr_delete(void *s)
 
 static int32_t osi_semphr_take(void *s, uint32_t ticks)
 {
-    BLK_ENTER(2, s);
     int r = dmosi_semaphore_wait(s, 1, timeout_ms(ticks));
-    BLK_LEAVE();
     return r == 0 ? 1 : 0;
 }
 
-volatile uint32_t g_osi_fail_sem_give, g_osi_fail_queue_send, g_osi_queue_sent, g_osi_sem_gave;
-
 static int32_t osi_semphr_give(void *s)
 {
-    int r = dmosi_semaphore_post(s, 1);
-    g_osi_sem_gave++;
-    if (r != 0)
-        g_osi_fail_sem_give++;
-    return r == 0 ? 1 : 0;
+    return dmosi_semaphore_post(s, 1) == 0 ? 1 : 0;
 }
 
 /* a semaphore of every thread that asks (a few threads only) */
@@ -241,9 +194,7 @@ static void osi_mutex_delete(void *m)
 
 static int32_t osi_mutex_lock(void *m)
 {
-    BLK_ENTER(3, m);
     int r = dmosi_mutex_lock(m);
-    BLK_LEAVE();
     return r == 0 ? 1 : 0;
 }
 
@@ -288,16 +239,16 @@ static void osi_queue_delete(void *queue)
 static int32_t osi_queue_send(void *queue, void *item, uint32_t ticks)
 {
     osi_queue_t *q = queue;
-    g_osi_queue_sent++;
-    if (dmosi_queue_send(q->queue, item, timeout_ms(ticks)) != 0)
-    {
-        g_osi_fail_queue_send++;
-        return 0;
-    }
     uint32_t ps = cpu_irq_disable();
-    q->waiting++;
+    q->waiting++;                               /* before it is sent: the one that receives it may run (and count it off) at once */
     cpu_irq_restore(ps);
-    return 1;
+    if (dmosi_queue_send(q->queue, item, timeout_ms(ticks)) == 0)
+        return 1;
+    ps = cpu_irq_disable();
+    if (q->waiting > 0)
+        q->waiting--;
+    cpu_irq_restore(ps);
+    return 0;
 }
 
 static int32_t osi_queue_send_from_isr(void *queue, void *item, void *woken)
@@ -310,9 +261,7 @@ static int32_t osi_queue_send_from_isr(void *queue, void *item, void *woken)
 static int32_t osi_queue_recv(void *queue, void *item, uint32_t ticks)
 {
     osi_queue_t *q = queue;
-    BLK_ENTER(1, q);
     int r = dmosi_queue_receive(q->queue, item, timeout_ms(ticks));
-    BLK_LEAVE();
     if (r != 0)
         return 0;
     uint32_t ps = cpu_irq_disable();
@@ -416,7 +365,6 @@ static uint32_t osi_event_group_wait(void *event, uint32_t bits, int clear, int 
 {
     osi_event_t *e = event;
     uint32_t waited = 0;
-    BLK_ENTER(5, e);
     for (;;)
     {
         dmosi_mutex_lock(e->lock);
@@ -427,7 +375,6 @@ static uint32_t osi_event_group_wait(void *event, uint32_t bits, int clear, int 
         dmosi_mutex_unlock(e->lock);
         if (met || (ticks != TICKS_FOREVER && waited >= ticks))
         {
-            BLK_LEAVE();
             return now;
         }
         dmosi_thread_sleep(5);
@@ -446,23 +393,6 @@ typedef struct
 
 #define TASKS_KEPT      8
 static osi_task_t *g_tasks[TASKS_KEPT];
-
-/* "tasks, KB of their stacks, KB of the deepest use" for the debugging line of `wifi info` */
-void osi_task_stats(uint32_t *count, uint32_t *total_kb, uint32_t *peak_kb)
-{
-    *count = *total_kb = *peak_kb = 0;
-    for (int i = 0; i < TASKS_KEPT; i++)
-    {
-        dmosi_thread_info_t info;
-        if (g_tasks[i] != NULL && dmosi_thread_get_info(g_tasks[i]->thread, &info) == 0)
-        {
-            (*count)++;
-            *total_kb += (uint32_t) (info.stack_total >> 10);
-            if ((uint32_t) (info.stack_peak >> 10) > *peak_kb)
-                *peak_kb = (uint32_t) (info.stack_peak >> 10);
-        }
-    }
-}
 
 static void osi_task_main(void *arg)
 {
@@ -518,9 +448,7 @@ static void osi_task_delete(void *handle)
 
 static void osi_task_delay(uint32_t ticks)
 {
-    BLK_ENTER(4, ticks);
     dmosi_thread_sleep(ticks);
-    BLK_LEAVE();
 }
 
 static int32_t osi_task_ms_to_tick(uint32_t ms)
@@ -559,8 +487,6 @@ typedef struct ets_timer
     void (*func)(void *);
     void *arg;
 } ets_timer_t;
-
-volatile uint32_t g_osi_timer_armed, g_osi_timer_fired, g_osi_timer_created, g_osi_timer_create_failed;
 
 static ets_timer_t *g_timers;
 static dmosi_semaphore_t g_timer_wake;
@@ -626,7 +552,6 @@ static void timer_main(void *arg)
             void (*func)(void *) = timer->func;
             void *func_arg = timer->arg;
             cpu_irq_restore(ps);
-            g_osi_timer_fired++;
             if (func != NULL)
                 func(func_arg);
             ps = cpu_irq_disable();
@@ -664,7 +589,6 @@ static void osi_timer_arm_ms(void *ptimer, uint32_t ms, bool repeat)
     ets_timer_t *timer = ptimer;
     if (ms == 0)
         ms = 1;
-    g_osi_timer_armed++;
     uint32_t ps = cpu_irq_disable();
     timer_unlink(timer);
     timer->expire = timer_now() + ms;
@@ -699,14 +623,13 @@ static void osi_timer_done(void *ptimer)
 
 /* ---- the pool: internal RAM only for the radio (the MAC reaches its buffers by DMA; the heaps of the firmware are used up by then) ---- */
 
-#define POOL_BASE       0x3fcd0000u         /* behind the DMA heap of dmod-boot; 0x3fcd0000..0x3fce0000 is nobody else's */
-#define POOL_SIZE       0xFFC0u
+#define POOL_BASE       DMESPWIFI_POOL_BASE
+#define POOL_SIZE       (DMESPWIFI_POOL_END - DMESPWIFI_POOL_BASE)
 #define POOL_ALIGN      16u
 
 typedef struct pool_block { uint32_t size; uint32_t used; } pool_block_t;   /* 8 bytes + 8 of padding: the data is 16-aligned */
 
 static bool g_pool_ready;
-static uint32_t g_pool_free_min = POOL_SIZE;
 
 static inline bool pool_owns(const void *p)
 {
@@ -721,7 +644,8 @@ static void pool_init(void)
     g_pool_ready = true;
 }
 
-static void *pool_alloc(size_t size)
+/* (interrupts off) */
+static void *pool_alloc_locked(size_t size)
 {
     if (!g_pool_ready)
         pool_init();
@@ -747,7 +671,8 @@ static void *pool_alloc(size_t size)
     return NULL;
 }
 
-static void pool_free(void *p)
+/* (interrupts off) */
+static void pool_free_locked(void *p)
 {
     pool_block_t *b = (pool_block_t *) ((uintptr_t) p - 16u);
     b->used = 0;
@@ -769,30 +694,26 @@ static void pool_free(void *p)
     }
 }
 
+/* the tasks of the libraries, the thread that sends and the one of the timers all take and give back: the list changes with the interrupts off
+ * (it is short: tens of blocks) */
+static void *pool_alloc(size_t size)
+{
+    uint32_t ps = cpu_irq_disable();
+    void *p = pool_alloc_locked(size);
+    cpu_irq_restore(ps);
+    return p;
+}
+
+static void pool_free(void *p)
+{
+    uint32_t ps = cpu_irq_disable();
+    pool_free_locked(p);
+    cpu_irq_restore(ps);
+}
+
 void *osi_pool_alloc(size_t size)
 {
     return pool_alloc(size);
-}
-
-uint32_t osi_pool_stats(uint32_t *largest)
-{
-    uint32_t total = 0, big = 0, pos = 0;
-    if (!g_pool_ready)
-        pool_init();
-    while (pos < POOL_SIZE)
-    {
-        pool_block_t *c = (pool_block_t *) (POOL_BASE + pos);
-        if (!c->used)
-        {
-            total += c->size;
-            if (c->size > big)
-                big = c->size;
-        }
-        pos += 16u + c->size;
-    }
-    *largest = big;
-    (void) g_pool_free_min;
-    return total;
 }
 
 /* ---- memory ---- */
@@ -840,26 +761,9 @@ static void *osi_zalloc(size_t size)
 }
 
 /* what the MAC reaches by DMA (the descriptors, the buffers of the frames) is in the internal RAM, not in the PSRAM: the DMA heap first */
-static volatile uint32_t g_internal_ok, g_internal_bad, g_internal_bad_bytes;
-
 static void *osi_internal_malloc(size_t size)
 {
-    void *p = pool_alloc(size);
-    if (p != NULL)
-        g_internal_ok++;
-    else
-    {
-        g_internal_bad++;
-        g_internal_bad_bytes += (uint32_t) size;
-    }
-    return p;
-}
-
-void osi_alloc_stats(uint32_t *ok, uint32_t *bad, uint32_t *bad_bytes)
-{
-    *ok = g_internal_ok;
-    *bad = g_internal_bad;
-    *bad_bytes = g_internal_bad_bytes;
+    return pool_alloc(size);
 }
 
 static void *osi_internal_calloc(size_t n, size_t size)

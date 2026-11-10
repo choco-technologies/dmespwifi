@@ -68,6 +68,12 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
+      # The image of the Espressif libraries (the package carries it): the sources and the libraries of ESP-IDF are fetched by the script
+      - name: Build the image of the Wi-Fi libraries
+        run: |
+          image/build.sh
+          test -f image/dmespwifi_image.bin
+
       - name: Build dmespwifi for ${{ matrix.arch_name }}
         run: |
           set -e

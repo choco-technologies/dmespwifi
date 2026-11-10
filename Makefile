@@ -24,7 +24,7 @@ DMOD_MODULE_VERSION=0.1
 DMOD_AUTHOR_NAME=Patryk Kubiak
 
 # The list of C sources
-DMOD_CSOURCES=src/dmespwifi.c
+DMOD_CSOURCES=src/dmespwifi.c src/wifi.c src/osi.c src/radio.c src/image.c
 
 # The list of C++ sources
 DMOD_CXXSOURCES=

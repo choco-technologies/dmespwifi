@@ -17,3 +17,4 @@ image/obj/
 image/*.elf
 image/*.map
 image/*.bin
+image/esp-idf/

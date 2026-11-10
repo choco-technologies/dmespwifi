@@ -19,6 +19,12 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      # The image of the Espressif libraries (the package carries it): the sources and the libraries of ESP-IDF are fetched by the script
+      - name: Build the image of the Wi-Fi libraries
+        run: |
+          image/build.sh
+          test -f image/dmespwifi_image.bin
+
       - name: Build dmespwifi
         run: |
           mkdir -p build

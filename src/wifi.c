@@ -3,8 +3,6 @@
  * connection that is kept, the frames.
  */
 #include "private.h"
-#define BLK6 (*(volatile uint32_t *) 0x600080C8u)
-#include "dmheap.h"
 #include <errno.h>
 #include <string.h>
 
@@ -43,8 +41,6 @@ int wifi_event(const char *base, int32_t id, void *data, size_t size)
     (void) size;
     if (c == NULL)
         return 0;
-    BLK6 = 13;
-    radio_log("wifi: event %d\n", (int) id);
     switch (id)
     {
         case EVENT_SCAN_DONE:
@@ -82,58 +78,14 @@ int wifi_event(const char *base, int32_t id, void *data, size_t size)
         default:
             break;
     }
-    BLK6 = 0;
     return 0;
 }
 
 /* ---- frames ---- */
 
-/* the first frames of the link, for the log: the type, the length, the UDP ports (no payload) */
-static void trace_frame(const char *dir, const uint8_t *f, size_t len, int32_t result)
-{
-    static uint32_t count;
-    if (count >= 60u || len < 14u)
-        return;
-    count++;
-    unsigned type = ((unsigned) f[12] << 8) | f[13];
-    unsigned sport = 0, dport = 0;
-    if (type == 0x0800u && len >= 38u && f[23] == 17u)
-    {
-        size_t ihl = (size_t) (f[14] & 0x0Fu) * 4u;
-        if (len >= 14u + ihl + 4u)
-        {
-            sport = ((unsigned) f[14u + ihl] << 8) | f[15u + ihl];
-            dport = ((unsigned) f[16u + ihl] << 8) | f[17u + ihl];
-        }
-    }
-    if ((sport == 67u || dport == 67u) && len >= 62u)
-        radio_log("net: dhcp dst mac %02x:%02x:%02x:%02x:%02x:%02x src mac %02x:%02x:%02x:%02x:%02x:%02x ip %u.%u.%u.%u>%u.%u.%u.%u flags %02x%02x op %u\n",
-                  f[0], f[1], f[2], f[3], f[4], f[5], f[6], f[7], f[8], f[9], f[10], f[11], f[26], f[27], f[28], f[29], f[30], f[31], f[32], f[33], f[52], f[53], f[42]);
-    if (dport == 67u && len > 282u)
-    {
-        char hdr[130];
-        size_t h = 0;
-        for (size_t i = 0; i < 62u; i++)
-            h += (size_t) Dmod_SnPrintf(hdr + h, sizeof(hdr) - h, "%02x", f[i]);
-        radio_log("net: dhcp header %s\n", hdr);
-        char opts[120];
-        size_t n = 0;
-        for (size_t i = 282u; i < len && n + 3u < sizeof(opts); i++)
-            n += (size_t) Dmod_SnPrintf(opts + n, sizeof(opts) - n, "%02x", f[i]);
-        radio_log("net: dhcp xid %02x%02x%02x%02x options %s\n", f[46], f[47], f[48], f[49], opts);
-    }
-    if (sport == 67u && len >= 62u)
-        radio_log("net: dhcp from %u.%u.%u.%u offers %u.%u.%u.%u\n", f[26], f[27], f[28], f[29], f[58], f[59], f[60], f[61]);
-    radio_log("net: %s type 0x%04x len %u udp %u>%u result %d\n", dir, type, (unsigned) len, sport, dport, (int) result);
-}
-
-
 int wifi_rx_frame(void *buffer, uint16_t length, void *eb)
 {
-    BLK6 = 12;
     struct dmdrvi_context *c = g_ctx;
-    if (buffer != NULL)
-        trace_frame(c != NULL && c->running ? "rx" : "rx (not running)", buffer, length, 0);
     if (c != NULL && c->running && buffer != NULL && length > 0 && length <= DMESPWIFI_FRAME_MAX)
     {
         dmosi_mutex_lock(c->lock);
@@ -156,7 +108,6 @@ int wifi_rx_frame(void *buffer, uint16_t length, void *eb)
     }
     if (eb != NULL)
         g_api->esp_wifi_internal_free_rx_buffer(eb);
-    BLK6 = 0;
     return 0;
 }
 
@@ -167,21 +118,7 @@ int wifi_send_frame(struct dmdrvi_context *c, const void *frame, size_t size)
     dmosi_mutex_lock(c->lock);
     bool can = c->running && c->state == DMDRVI_WIFI_STATE_CONNECTED;
     dmosi_mutex_unlock(c->lock);
-    uint8_t padded[350];
-    const void *out = frame;
-    size_t out_size = size;
-    const uint8_t *fr = frame;
-    if (size >= 42u && size < sizeof(padded) && fr[12] == 0x08 && fr[13] == 0x00 && fr[23] == 17u && fr[36] == 0 && fr[37] == 67u)
-    {
-        memcpy(padded, frame, size);                /* a DHCP request is padded to the BOOTP minimum (lwIP does it too): 350 bytes */
-        memset(padded + size, 0, sizeof(padded) - size);
-        out = padded;
-        out_size = sizeof(padded);
-    }
-    uint32_t q0 = g_osi_queue_sent, s0 = g_osi_sem_gave;
-    int32_t ret = can ? g_api->esp_wifi_internal_tx(WIFI_IF_STA, (void *) out, (uint16_t) out_size) : -1;
-    radio_log("net: tx posted queue %u sem %u\n", (unsigned) (g_osi_queue_sent - q0), (unsigned) (g_osi_sem_gave - s0));
-    trace_frame(can ? "tx" : "tx (link down)", frame, size, ret);
+    int32_t ret = can ? g_api->esp_wifi_internal_tx(WIFI_IF_STA, (void *) frame, (uint16_t) size) : -1;
     dmosi_mutex_lock(c->lock);
     if (ret == 0)
         c->tx_count++;
@@ -213,21 +150,6 @@ static void config_fill(wifi_init_config_t *cfg)
     cfg->magic = WIFI_INIT_CONFIG_MAGIC;
 }
 
-/* a look at the air (the headers of the data frames; no payload): what the AP sends us, also what the MAC then drops */
-static void sniff(void *buffer, int type)
-{
-    static uint32_t count;
-    const uint8_t *b = buffer;
-    if (type != 2 || count >= 40u)
-        return;
-    const uint8_t *p = b + 48;
-    if (!(p[10] == 0x62 && p[11] == 0x6f && p[12] == 0x81) && memcmp(p + 4, g_ctx->mac, 6) != 0)
-        return;                                 /* only the phone's frames and the ones to us */
-    count++;
-    radio_log("air: state %u siglen %u fc %02x%02x a1 %02x:%02x:%02x:%02x:%02x:%02x a2 %02x:%02x:%02x:%02x:%02x:%02x\n", (unsigned) b[47], (unsigned) ((b[44] | (b[45] << 8)) & 0xFFFu), p[0], p[1], p[4], p[5], p[6], p[7], p[8], p[9], p[10], p[11],
-              p[12], p[13], p[14], p[15]);
-}
-
 static int radio_up(struct dmdrvi_context *c)
 {
     if (!image_load())
@@ -252,17 +174,9 @@ static int radio_up(struct dmdrvi_context *c)
     {
         /* Europe: the channels 1-13 (the libraries start with 1-11 and would not see an access point on 12 or 13) */
         static const wifi_country_t country = { .cc = "PL", .schan = 1, .nchan = 13, .max_tx_power = 20, .policy = WIFI_COUNTRY_POLICY_MANUAL };
-        int32_t cr = g_api->esp_wifi_set_country(&country);
-        radio_log("wifi: country: %d\n", (int) cr);
-        ret = g_api->esp_wifi_start();
-        {
-            static const uint32_t filter = 1u << 2;     /* WIFI_PROMIS_FILTER_MASK_DATA */
-            g_api->esp_wifi_set_promiscuous_filter(&filter);
-            g_api->esp_wifi_set_promiscuous_rx_cb(sniff);
-            g_api->esp_wifi_set_promiscuous(true);
-        }
+        ret = g_api->esp_wifi_set_country(&country);
         if (ret == 0)
-            radio_log("wifi: power save off: %d\n", (int) g_api->esp_wifi_set_ps(0 /* WIFI_PS_NONE */));
+            ret = g_api->esp_wifi_start();
     }
     if (ret != 0)
     {
@@ -381,12 +295,6 @@ int wifi_scan(struct dmdrvi_context *c, dmdrvi_wifi_scan_t *scan)
     uint16_t found = 0;
     if (ret == 0)
         g_api->esp_wifi_scan_get_ap_num(&found);
-    char isr[96];
-    osi_isr_stats(isr, sizeof(isr));
-    uint32_t mem_ok, mem_bad, mem_bad_bytes;
-    osi_alloc_stats(&mem_ok, &mem_bad, &mem_bad_bytes);
-    radio_log("wifi: scan 0x%x, %u found, interrupts (line:calls)%s; internal memory: %u ok, %u not internal (%u bytes)\n", (unsigned) scan_ret,
-              (unsigned) found, isr, (unsigned) mem_ok, (unsigned) mem_bad, (unsigned) mem_bad_bytes);
     uint16_t room = (found > SCAN_MAX_RECORDS) ? SCAN_MAX_RECORDS : found;
     wifi_ap_record_t *records = (ret == 0 && room > 0) ? Dmod_Malloc(room * sizeof(*records)) : NULL;
     if (ret == 0 && room > 0)
@@ -489,31 +397,11 @@ void wifi_get_status(struct dmdrvi_context *c, dmdrvi_wifi_status_t *status)
 
 void wifi_get_info(struct dmdrvi_context *c, dmdrvi_wifi_info_t *info)
 {
-    {
-        char isr[96];
-        osi_isr_stats(isr, sizeof(isr));
-        radio_log("info: timers armed %u fired %u created %u failed %u\n", (unsigned) g_osi_timer_armed, (unsigned) g_osi_timer_fired,
-                  (unsigned) g_osi_timer_created, (unsigned) g_osi_timer_create_failed);
-        radio_log("info: interrupts (line:calls)%s; sem give %u (failed %u), queue send %u (failed %u)\n", isr, (unsigned) g_osi_sem_gave, (unsigned) g_osi_fail_sem_give,
-                  (unsigned) g_osi_queue_sent, (unsigned) g_osi_fail_queue_send);
-    }
     memset(info, 0, sizeof(*info));
     memcpy(info->driver, "dmespwifi", sizeof("dmespwifi"));
-    /* (debugging: the internal heaps, KB free/largest of "main" and "dma", and how many allocations of the radio missed the internal RAM) */
-    {
-        dmheap_stats_t m = { 0 }, d = { 0 };
-        dmheap_context_t *hm = dmheap_get_context_by_name("main"), *hd = dmheap_get_context_by_name("dma");
-        uint32_t ok, bad, bad_bytes;
-        osi_alloc_stats(&ok, &bad, &bad_bytes);
-        if (hm != NULL) dmheap_get_stats(hm, &m);
-        if (hd != NULL) dmheap_get_stats(hd, &d);
-        uint32_t pl, pf = osi_pool_stats(&pl);
-        uint32_t tasks, total_kb, peak_kb;
-        osi_task_stats(&tasks, &total_kb, &peak_kb);
-        Dmod_SnPrintf(info->firmware, sizeof(info->firmware), "m%u/%u p%u/%u b%u/%u t%u/%u/%u", (unsigned) (m.free_bytes >> 10),
-                      (unsigned) (m.largest_free_block >> 10), (unsigned) (pf >> 10), (unsigned) (pl >> 10),
-                      (unsigned) bad, (unsigned) (ok + bad), (unsigned) tasks, (unsigned) total_kb, (unsigned) peak_kb);
-    }
+    const char *phy = g_api != NULL ? g_api->get_phy_version_str() : NULL;
+    if (phy != NULL)
+        Dmod_SnPrintf(info->firmware, sizeof(info->firmware), "%s", phy);
     memcpy(info->chip, "ESP32-S3", sizeof("ESP32-S3"));
     dmosi_mutex_lock(c->lock);
     if (c->started)

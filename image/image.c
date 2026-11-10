@@ -25,10 +25,6 @@ extern void    phy_bbpll_en_usb(bool);
 extern int32_t esp_supplicant_init(void);
 extern int32_t esp_wifi_set_country(const wifi_country_t *);
 extern int32_t esp_wifi_set_ps(int);
-extern int32_t esp_wifi_statis_dump(uint32_t);
-extern int32_t esp_wifi_set_promiscuous(bool);
-extern int32_t esp_wifi_set_promiscuous_rx_cb(void (*)(void *, int));
-extern int32_t esp_wifi_set_promiscuous_filter(const uint32_t *);
 extern const char g_wifi_default_wpa_crypto_funcs[];
 extern wifi_osi_funcs_t g_wifi_osi_funcs;
 
@@ -54,7 +50,6 @@ static int log_to_host(const char *format, ...)
     return n;
 }
 
-int dmwifi_log(const char *format, ...) { va_list a; va_start(a, format); int n = (g_host && g_host->vprintf) ? g_host->vprintf(format, a) : 0; va_end(a); return n; }
 int phy_printf(const char *format, ...)     { va_list a; va_start(a, format); int n = (g_host && g_host->vprintf) ? g_host->vprintf(format, a) : 0; va_end(a); return n; }
 int net80211_printf(const char *format, ...){ va_list a; va_start(a, format); int n = (g_host && g_host->vprintf) ? g_host->vprintf(format, a) : 0; va_end(a); return n; }
 int pp_printf(const char *format, ...)      { va_list a; va_start(a, format); int n = (g_host && g_host->vprintf) ? g_host->vprintf(format, a) : 0; va_end(a); return n; }
@@ -156,6 +151,7 @@ const dmwifi_image_header_t dmwifi_image_header =
         esp_wifi_init_internal, esp_wifi_deinit_internal, esp_wifi_start, esp_wifi_stop, esp_wifi_set_mode, esp_wifi_scan_start,
         esp_wifi_scan_get_ap_num, esp_wifi_scan_get_ap_records, esp_wifi_connect, esp_wifi_disconnect, esp_wifi_set_config,
         esp_wifi_get_mac, esp_wifi_internal_tx, esp_wifi_internal_reg_rxcb, esp_wifi_internal_free_rx_buffer, register_chipv7_phy,
-        get_phy_version_str, phy_param_track_tot, esp_wifi_internal_set_log_level, supplicant_start, phy_bbpll_en_usb, esp_wifi_set_country, esp_wifi_set_ps, esp_wifi_statis_dump, esp_wifi_set_promiscuous, esp_wifi_set_promiscuous_rx_cb, esp_wifi_set_promiscuous_filter, g_wifi_default_wpa_crypto_funcs,
+        get_phy_version_str, phy_param_track_tot, esp_wifi_internal_set_log_level, supplicant_start, phy_bbpll_en_usb,
+        esp_wifi_set_country, esp_wifi_set_ps, g_wifi_default_wpa_crypto_funcs,
     },
 };

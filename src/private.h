@@ -16,13 +16,19 @@
 #define DMESPWIFI_IMAGE_RAM_BASE        0x3fcc4000u
 #define DMESPWIFI_IMAGE_RAM_END         0x3fcc8000u
 
+/* The memory of the radio (the buffers of the libraries: the MAC reaches them by DMA, so the internal RAM, and the heap of the firmware
+ * there is used up by the modules): the RAM that the selector of dmod-boot needs only for its start (selector.ld: BOOT), 61 kB. What is below
+ * it (0x3fcd1700..0x3fcda000) is the code and the table of the selector, which the firmware calls: not to be touched */
+#define DMESPWIFI_POOL_BASE             0x3fcda000u
+#define DMESPWIFI_POOL_END              0x3fce9700u
+
 #define DMESPWIFI_CONTEXT_MAGIC         0x46575345u     /* "ESWF" */
 #define DMESPWIFI_FRAME_MAX             1600u           /* an 802.3 frame (1500 of data) and what the radio adds */
 #define DMESPWIFI_RX_FRAMES             16u
 #define DMESPWIFI_READ_TIMEOUT_MS       50
 #define DMESPWIFI_DEFAULT_IFACE         "wlan0"
 #define DMESPWIFI_DEFAULT_PRIORITY      3
-#define DMESPWIFI_LOG_SIZE              12288u
+#define DMESPWIFI_LOG_SIZE              4096u
 
 typedef struct
 {
@@ -82,13 +88,7 @@ bool  image_load(void);
 /* ---- osi.c ---- */
 void  osi_fill(wifi_osi_funcs_t *osi);
 int   osi_isr_dispatch(int line);
-void  osi_isr_stats(char *out, size_t size);
-extern volatile uint32_t g_osi_fail_sem_give, g_osi_fail_queue_send, g_osi_queue_sent, g_osi_sem_gave;
-extern volatile uint32_t g_osi_timer_armed, g_osi_timer_fired, g_osi_timer_created, g_osi_timer_create_failed;
-void  osi_task_stats(uint32_t *count, uint32_t *total_kb, uint32_t *peak_kb);
 void *osi_pool_alloc(size_t size);
-uint32_t osi_pool_stats(uint32_t *largest);
-void  osi_alloc_stats(uint32_t *ok, uint32_t *bad, uint32_t *bad_bytes);
 
 /* ---- radio.c ---- */
 uint64_t radio_time_us(void);
