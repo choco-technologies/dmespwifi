@@ -80,7 +80,6 @@ bool  image_load(void);
 
 /* ---- osi.c ---- */
 void  osi_fill(wifi_osi_funcs_t *osi);
-int   osi_isr_dispatch(int line);
 void *osi_pool_alloc(size_t size);
 void  osi_release(void *p);            /* what the pool or the heap gave */
 

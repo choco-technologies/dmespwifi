@@ -49,45 +49,46 @@ static void cpu_ints_off(uint32_t mask) { (void) mask; }
 #endif
 
 #define INTMATRIX_CORE0     0x600C2000u
-#define LINES               32
 
-typedef struct
+/* The only line of the CPU the libraries use: ETS_WMAC_INUM of ESP-IDF (the MAC and the power of the Wi-Fi are routed to it). Only it
+ * gets a handler of dmod - the other lines are other drivers', and a handler on each would run on every interrupt of theirs */
+#define RADIO_LINE          0
+
+static struct
 {
     void (*handler)(void *);
     void *arg;
-} isr_t;
-
-static isr_t g_isr[LINES];
+} g_isr;
 
 static void osi_set_intr(int32_t cpu, uint32_t source, uint32_t number, int32_t priority)
 {
     (void) priority;
+    if (number != RADIO_LINE)
+    {
+        radio_log("wifi: the libraries route the source %u to the line %u, only %u is handled - not routed\n", (unsigned) source,
+                  (unsigned) number, (unsigned) RADIO_LINE);
+        return;
+    }
     *(volatile uint32_t *) (INTMATRIX_CORE0 + (cpu == 0 ? 0u : 0x800u) + source * 4u) = number;
 }
 
 static void osi_set_isr(int32_t n, void *f, void *arg)
 {
-    if (n >= 0 && n < LINES)
+    if (n != RADIO_LINE)
     {
-        g_isr[n].arg = arg;
-        g_isr[n].handler = (void (*)(void *)) f;
+        radio_log("wifi: the libraries set a handler of the line %d, only %u is handled - ignored\n", (int) n, (unsigned) RADIO_LINE);
+        return;
     }
+    g_isr.arg = arg;
+    g_isr.handler = (void (*)(void *)) f;
 }
 
-int osi_isr_dispatch(int line)
+/* The vector of the port calls Dmod_IrqAll(line), which comes here for the line of the radio */
+DMOD_IRQ_HANDLER(RADIO_LINE)
 {
-    isr_t *isr = &g_isr[line];
-    if (isr->handler != NULL)
-        isr->handler(isr->arg);
-    return 0;
+    if (g_isr.handler != NULL)
+        g_isr.handler(g_isr.arg);
 }
-
-/* The lines of the CPU are dmod's: the vector of the port calls Dmod_IrqAll(line), which comes here */
-#define IRQ_LINE(n)     DMOD_IRQ_HANDLER(n) { osi_isr_dispatch(n); }
-IRQ_LINE(0)  IRQ_LINE(1)  IRQ_LINE(2)  IRQ_LINE(3)  IRQ_LINE(4)  IRQ_LINE(5)  IRQ_LINE(6)  IRQ_LINE(7)
-IRQ_LINE(8)  IRQ_LINE(9)  IRQ_LINE(10) IRQ_LINE(11) IRQ_LINE(12) IRQ_LINE(13) IRQ_LINE(14) IRQ_LINE(15)
-IRQ_LINE(16) IRQ_LINE(17) IRQ_LINE(18) IRQ_LINE(19) IRQ_LINE(20) IRQ_LINE(21) IRQ_LINE(22) IRQ_LINE(23)
-IRQ_LINE(24) IRQ_LINE(25) IRQ_LINE(26) IRQ_LINE(27) IRQ_LINE(28) IRQ_LINE(29) IRQ_LINE(30) IRQ_LINE(31)
 
 static bool osi_is_from_isr(void)
 {
