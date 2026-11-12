@@ -1,36 +1,17 @@
-/* The glue of the image: the 8 symbols the libraries need that are neither theirs nor in the ROM, and the header. */
-#include "dmwifi_image.h"
+/* The glue of the library: the 8 symbols the libraries need that are neither theirs nor in the ROM, and the Built-in API of the radio. */
+#define DMOD_ENABLE_REGISTRATION
+#define dmod_dmespradio_api(VERSION, RET, NAME, PARAMS)     DMOD_BUILTIN_INPUT_API(dmespradio, VERSION, RET, NAME, PARAMS)
+#include "dmespradio.h"
 #include <string.h>
+#include <stdarg.h>
 
-extern int32_t esp_wifi_init_internal(const wifi_init_config_t *);
-extern int32_t esp_wifi_deinit_internal(void);
-extern int32_t esp_wifi_start(void);
-extern int32_t esp_wifi_stop(void);
-extern int32_t esp_wifi_set_mode(wifi_mode_t);
-extern int32_t esp_wifi_scan_start(const void *, bool);
-extern int32_t esp_wifi_scan_get_ap_num(uint16_t *);
-extern int32_t esp_wifi_scan_get_ap_records(uint16_t *, wifi_ap_record_t *);
-extern int32_t esp_wifi_connect(void);
-extern int32_t esp_wifi_disconnect(void);
-extern int32_t esp_wifi_set_config(int, void *);
-extern int32_t esp_wifi_get_mac(int, uint8_t *);
-extern int32_t esp_wifi_internal_tx(int, void *, uint16_t);
-extern int32_t esp_wifi_internal_reg_rxcb(int, void *);
-extern void    esp_wifi_internal_free_rx_buffer(void *);
-extern int32_t register_chipv7_phy(const void *, void *, int);
-extern char *  get_phy_version_str(void);
-extern void    phy_param_track_tot(bool, bool);
-extern int32_t esp_wifi_internal_set_log_level(int);
-extern void    phy_bbpll_en_usb(bool);
+#define DECLARE(RET, FUNCTION, PARAMS, ARGS)    extern RET FUNCTION PARAMS;
+DMESPRADIO_FUNCTIONS(DECLARE)
 extern int32_t esp_supplicant_init(void);
-extern int32_t esp_wifi_set_country(const wifi_country_t *);
-extern int32_t esp_wifi_set_ps(int);
 extern const char g_wifi_default_wpa_crypto_funcs[];
 extern wifi_osi_funcs_t g_wifi_osi_funcs;
 
-extern uint32_t _data_load_d, _data_start, _data_size, _bss_start, _bss_size, _ram_end, _image_size;   /* (image.ld) */
-
-static const dmwifi_host_t *g_host;
+static const dmespradio_host_t *g_host;
 
 const char *const WIFI_EVENT = "WIFI_EVENT";
 
@@ -121,37 +102,24 @@ int sprintf(char *buffer, const char *format, ...)
     return (int)(out - buffer);
 }
 
+/* ---- the Built-in API ---- */
+
+#define DEFINE(RET, FUNCTION, PARAMS, ARGS)     DMOD_INPUT_API_DECLARATION(dmespradio, 1.0, RET, _##FUNCTION, PARAMS) { return FUNCTION ARGS; }
+DMESPRADIO_FUNCTIONS(DEFINE)
+
+DMOD_INPUT_API_DECLARATION(dmespradio, 1.0, void, _init, (const dmespradio_host_t *host))
+{
+    g_host = host;
+}
+
 /* the supplicant of hostap (supp/): the libraries call it through the table that esp_supplicant_init() registers */
-static int32_t supplicant_start(void)
+DMOD_INPUT_API_DECLARATION(dmespradio, 1.0, int32_t, _supplicant_init, (void))
 {
     g_wifi_osi_funcs = *g_host->osi;
     return esp_supplicant_init();
 }
 
-static void image_init(const dmwifi_host_t *host)
+DMOD_INPUT_API_DECLARATION(dmespradio, 1.0, const void *, _crypto_funcs, (void))
 {
-    g_host = host;
+    return g_wifi_default_wpa_crypto_funcs;
 }
-
-__attribute__((section(".header"), used))
-const dmwifi_image_header_t dmwifi_image_header =
-{
-    .magic = DMWIFI_IMAGE_MAGIC,
-    .abi = DMWIFI_IMAGE_ABI,
-    .image_size = (uint32_t)&_image_size,
-    .data_load = (uint32_t)&_data_load_d,
-    .data_addr = (uint32_t)&_data_start,
-    .data_size = (uint32_t)&_data_size,
-    .bss_addr = (uint32_t)&_bss_start,
-    .bss_size = (uint32_t)&_bss_size,
-    .ram_end = (uint32_t)&_ram_end,
-    .init = image_init,
-    .api =
-    {
-        esp_wifi_init_internal, esp_wifi_deinit_internal, esp_wifi_start, esp_wifi_stop, esp_wifi_set_mode, esp_wifi_scan_start,
-        esp_wifi_scan_get_ap_num, esp_wifi_scan_get_ap_records, esp_wifi_connect, esp_wifi_disconnect, esp_wifi_set_config,
-        esp_wifi_get_mac, esp_wifi_internal_tx, esp_wifi_internal_reg_rxcb, esp_wifi_internal_free_rx_buffer, register_chipv7_phy,
-        get_phy_version_str, phy_param_track_tot, esp_wifi_internal_set_log_level, supplicant_start, phy_bbpll_en_usb,
-        esp_wifi_set_country, esp_wifi_set_ps, g_wifi_default_wpa_crypto_funcs,
-    },
-};

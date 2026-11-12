@@ -150,13 +150,13 @@ void radio_phy_enable(void)
             }
             memset(cal, 0, 1904);
             radio_base_mac(cal + 4);
-            g_api->phy_bbpll_en_usb(true);      /* (without it the PHY init switches the USB PHY - the JTAG and the console - off) */
-            int32_t ret = g_api->register_chipv7_phy(g_phy_init_data, cal, PHY_RF_CAL_FULL);
-            radio_log("wifi: PHY %s, calibration: %d\n", g_api->get_phy_version_str(), (int) ret);
+            dmespradio_phy_bbpll_en_usb(true);      /* (without it the PHY init switches the USB PHY - the JTAG and the console - off) */
+            int32_t ret = dmespradio_register_chipv7_phy(g_phy_init_data, cal, PHY_RF_CAL_FULL);
+            radio_log("wifi: PHY %s, calibration: %d\n", dmespradio_get_phy_version_str(), (int) ret);
             Dmod_Free(cal);
             g_phy_calibrated = true;
         }
-        g_api->phy_param_track_tot(true, false);
+        dmespradio_phy_param_track_tot(true, false);
     }
     g_phy_modem_flag |= PHY_MODEM_WIFI;
 }

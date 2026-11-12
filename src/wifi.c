@@ -107,7 +107,7 @@ int wifi_rx_frame(void *buffer, uint16_t length, void *eb)
         }
     }
     if (eb != NULL)
-        g_api->esp_wifi_internal_free_rx_buffer(eb);
+        dmespradio_esp_wifi_internal_free_rx_buffer(eb);
     return 0;
 }
 
@@ -118,7 +118,7 @@ int wifi_send_frame(struct dmdrvi_context *c, const void *frame, size_t size)
     dmosi_mutex_lock(c->lock);
     bool can = c->running && c->state == DMDRVI_WIFI_STATE_CONNECTED;
     dmosi_mutex_unlock(c->lock);
-    int32_t ret = can ? g_api->esp_wifi_internal_tx(WIFI_IF_STA, (void *) frame, (uint16_t) size) : -1;
+    int32_t ret = can ? dmespradio_esp_wifi_internal_tx(WIFI_IF_STA, (void *) frame, (uint16_t) size) : -1;
     dmosi_mutex_lock(c->lock);
     if (ret == 0)
         c->tx_count++;
@@ -135,7 +135,7 @@ static void config_fill(wifi_init_config_t *cfg)
 {
     memset(cfg, 0, sizeof(*cfg));
     cfg->osi_funcs = &g_osi;
-    memcpy(&cfg->wpa_crypto_funcs, g_api->crypto_funcs, sizeof(cfg->wpa_crypto_funcs));   /* what the image links: size, version, the functions */
+    memcpy(&cfg->wpa_crypto_funcs, dmespradio_crypto_funcs(), sizeof(cfg->wpa_crypto_funcs));   /* what the image links: size, version, the functions */
     cfg->static_rx_buf_num = 10;
     cfg->dynamic_rx_buf_num = 32;
     cfg->tx_buf_type = 1;
@@ -158,25 +158,25 @@ static int radio_up(struct dmdrvi_context *c)
     config_fill(&g_config);
     radio_base_mac(c->mac);
     radio_power_domain_on();
-    g_api->esp_wifi_internal_set_log_level(c->log_level);
-    int32_t ret = g_api->esp_wifi_init_internal(&g_config);
+    dmespradio_esp_wifi_internal_set_log_level(c->log_level);
+    int32_t ret = dmespradio_esp_wifi_init_internal(&g_config);
     if (ret != 0)
     {
         radio_log("wifi: esp_wifi_init_internal: 0x%x\n", (unsigned) ret);
         return -EIO;
     }
-    ret = g_api->supplicant_init();
+    ret = dmespradio_supplicant_init();
     if (ret == 0)
-        ret = g_api->esp_wifi_internal_reg_rxcb(WIFI_IF_STA, (void *) wifi_rx_frame);
+        ret = dmespradio_esp_wifi_internal_reg_rxcb(WIFI_IF_STA, (void *) wifi_rx_frame);
     if (ret == 0)
-        ret = g_api->esp_wifi_set_mode(1 /* WIFI_MODE_STA */);
+        ret = dmespradio_esp_wifi_set_mode(1 /* WIFI_MODE_STA */);
     if (ret == 0)
     {
         /* Europe: the channels 1-13 (the libraries start with 1-11 and would not see an access point on 12 or 13) */
         static const wifi_country_t country = { .cc = "PL", .schan = 1, .nchan = 13, .max_tx_power = 20, .policy = WIFI_COUNTRY_POLICY_MANUAL };
-        ret = g_api->esp_wifi_set_country(&country);
+        ret = dmespradio_esp_wifi_set_country(&country);
         if (ret == 0)
-            ret = g_api->esp_wifi_start();
+            ret = dmespradio_esp_wifi_start();
     }
     if (ret != 0)
     {
@@ -213,7 +213,7 @@ static void control_main(void *arg)
         {
             dmosi_thread_sleep(RECONNECT_DELAY_MS);
             if (!c->stop && c->want_connected)
-                g_api->esp_wifi_connect();
+                dmespradio_esp_wifi_connect();
         }
     }
 }
@@ -239,7 +239,7 @@ void wifi_stop(struct dmdrvi_context *c)
     }
     if (c->started)
     {
-        g_api->esp_wifi_stop();
+        dmespradio_esp_wifi_stop();
         c->started = false;
     }
     g_ctx = NULL;
@@ -289,19 +289,19 @@ int wifi_scan(struct dmdrvi_context *c, dmdrvi_wifi_scan_t *scan)
         struct { uint32_t active_min, active_max, passive; } time;
         uint8_t home_chan_dwell_time;
     } config = { .show_hidden = true, .scan_type = 0 /* active */, .time = { 120, 300, 300 } };
-    int32_t scan_ret = g_api->esp_wifi_scan_start(&config, true);
+    int32_t scan_ret = dmespradio_esp_wifi_scan_start(&config, true);
     if (scan_ret != 0)
         ret = -EIO;
     uint16_t found = 0;
     if (ret == 0)
-        g_api->esp_wifi_scan_get_ap_num(&found);
+        dmespradio_esp_wifi_scan_get_ap_num(&found);
     uint16_t room = (found > SCAN_MAX_RECORDS) ? SCAN_MAX_RECORDS : found;
     wifi_ap_record_t *records = (ret == 0 && room > 0) ? Dmod_Malloc(room * sizeof(*records)) : NULL;
     if (ret == 0 && room > 0)
     {
         if (records == NULL)
             ret = -ENOMEM;
-        else if (g_api->esp_wifi_scan_get_ap_records(&room, records) != 0)
+        else if (dmespradio_esp_wifi_scan_get_ap_records(&room, records) != 0)
             ret = -EIO;
     }
     for (uint16_t i = 0; ret == 0 && records != NULL && i < room && scan->count < scan->max; i++)
@@ -352,16 +352,24 @@ int wifi_connect(struct dmdrvi_context *c, const dmdrvi_wifi_connect_t *request)
     cfg->sta.pmf_cfg.capable = true;
     cfg->sta.pmf_cfg.required = false;
 
+    /* A connection that is there, or being made, is dropped first: the libraries refuse to connect over it ("sta is connecting, return
+     * error") and tell nothing, so the state would stay "connecting" for good. Dropped, they tell that the link is lost and the control
+     * thread connects again - with the new configuration */
     dmosi_mutex_lock(c->lock);
+    bool busy = c->want_connected && (c->state == DMDRVI_WIFI_STATE_CONNECTED || c->state == DMDRVI_WIFI_STATE_CONNECTING);
     memcpy(c->ssid, request->ssid, ssid_len + 1u);
     c->want_connected = true;
     c->state = DMDRVI_WIFI_STATE_CONNECTING;
     c->reason = 0;
     dmosi_mutex_unlock(c->lock);
 
-    if (g_api->esp_wifi_set_config(WIFI_IF_STA, cfg) != 0)
+    if (busy)
+        dmespradio_esp_wifi_disconnect();
+    if (dmespradio_esp_wifi_set_config(WIFI_IF_STA, cfg) != 0)
         return -EINVAL;
-    g_api->esp_wifi_connect();                  /* (a refused try is tried again by the control thread: it tells when the link is lost) */
+    if (!busy)
+        dmespradio_esp_wifi_connect();              /* (a refused try is tried again by the control thread: it tells when the link is lost) */
+    /* (busy: the control thread connects - woken by the lost link, or by itself within a second when nothing was lost, between two tries) */
     return 0;
 }
 
@@ -375,7 +383,7 @@ int wifi_disconnect(struct dmdrvi_context *c)
     c->state = started ? DMDRVI_WIFI_STATE_IDLE : DMDRVI_WIFI_STATE_OFF;
     dmosi_mutex_unlock(c->lock);
     if (started)
-        g_api->esp_wifi_disconnect();
+        dmespradio_esp_wifi_disconnect();
     return 0;
 }
 
@@ -392,14 +400,22 @@ void wifi_get_status(struct dmdrvi_context *c, dmdrvi_wifi_status_t *status)
         status->rssi = c->rssi;
     }
     status->reason = c->reason;
+    bool connected = (c->state == DMDRVI_WIFI_STATE_CONNECTED);
     dmosi_mutex_unlock(c->lock);
+    if (connected)
+    {
+        wifi_ap_record_t ap;                        /* the signal: of the access point, as the radio hears it now */
+        memset(&ap, 0, sizeof(ap));
+        if (dmespradio_esp_wifi_sta_get_ap_info(&ap) == 0)
+            status->rssi = ap.rssi;
+    }
 }
 
 void wifi_get_info(struct dmdrvi_context *c, dmdrvi_wifi_info_t *info)
 {
     memset(info, 0, sizeof(*info));
     memcpy(info->driver, "dmespwifi", sizeof("dmespwifi"));
-    const char *phy = g_api != NULL ? g_api->get_phy_version_str() : NULL;
+    const char *phy = dmespradio_get_phy_version_str();
     if (phy != NULL)
         Dmod_SnPrintf(info->firmware, sizeof(info->firmware), "%s", phy);
     memcpy(info->chip, "ESP32-S3", sizeof("ESP32-S3"));

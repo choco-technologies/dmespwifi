@@ -1,6 +1,6 @@
 /* What the supplicant of hostap (esp_supplicant/, rsn_supp/, crypto/ of ESP-IDF, the station only) needs of its surroundings: the memory, the
  * time, the random numbers and the timers of the event loop - all of them from the table of the host. */
-#include "dmwifi_image.h"
+#include "dmespradio.h"
 #include <string.h>
 
 wifi_osi_funcs_t g_wifi_osi_funcs;

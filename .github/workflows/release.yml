@@ -68,12 +68,6 @@ jobs:
           echo "version=$VERSION" >> $GITHUB_OUTPUT
           echo "Extracted version: $VERSION"
 
-      # The image of the Espressif libraries (the package carries it): the sources and the libraries of ESP-IDF are fetched by the script
-      - name: Build the image of the Wi-Fi libraries
-        run: |
-          image/build.sh
-          test -f image/dmespwifi_image.bin
-
       - name: Build dmespwifi for ${{ matrix.arch_name }}
         run: |
           set -e
@@ -88,6 +82,12 @@ jobs:
           # defined in this repo's CMake config - nothing left to do here but
           # discover whatever got packaged, add release notes, and zip it.
           cmake .. -DDMOD_TOOLS_NAME=arch/${{ matrix.arch_name }} -DDMOD_MODULE_VERSION="${{ steps.get_version.outputs.version }}"
+
+          # The library of the radio (the package carries it): the sources and the libraries of ESP-IDF are fetched by the script; the
+          # glue needs the headers of dmod, which the configure step above fetched
+          DMOD_INC="-I$PWD/_deps/dmod-src/inc -I$PWD/_deps/dmod-build" ../image/build.sh
+          test -f ../image/libdmespwifi.a
+
           cmake --build .
 
           echo "Build completed for ${{ matrix.arch_name }}"

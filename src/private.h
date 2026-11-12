@@ -4,17 +4,9 @@
 #include "dmod.h"
 #include "dmosi.h"
 #include "dmdrvi.h"
-#include "dmwifi_image.h"
+#include "dmespradio.h"
 
 /* ---- Where things are ---- */
-
-/* The image of the Espressif libraries (image/): the flash from this offset, seen by the data bus (the header and the read-only data) and by
- * the instruction bus (the code) at the identity mapping of the flash (0x3C000000 / 0x42000000 + offset); its .data/.bss at the RAM that
- * dmod-boot reserves for it (the addresses are linked in) */
-#define DMESPWIFI_IMAGE_FLASH           0x00020000u     /* where dmod-boot writes the image: the free 896 kB after the store of the selector */
-#define DMESPWIFI_IMAGE_DATA_WINDOW     0x3C020000u
-#define DMESPWIFI_IMAGE_RAM_BASE        0x3fcc4000u
-#define DMESPWIFI_IMAGE_RAM_END         0x3fcc8000u
 
 /* The memory of the radio (the buffers of the libraries: the MAC reaches them by DMA, so the internal RAM, and the heap of the firmware
  * there is used up by the modules): the RAM that the selector of dmod-boot needs only for its start (selector.ld: BOOT), 61 kB. What is below
@@ -77,7 +69,6 @@ struct dmdrvi_context
 };
 
 extern struct dmdrvi_context *  g_ctx;          /* one radio: the libraries' callbacks have no context */
-extern const dmwifi_image_api_t * g_api;
 extern wifi_osi_funcs_t g_osi;
 
 /* ---- log: dmlog and a ring of our own (its address in RTC_CNTL_STORE5: JTAG finds it, no secret goes in) ---- */
@@ -91,6 +82,7 @@ bool  image_load(void);
 void  osi_fill(wifi_osi_funcs_t *osi);
 int   osi_isr_dispatch(int line);
 void *osi_pool_alloc(size_t size);
+void  osi_release(void *p);            /* what the pool or the heap gave */
 
 /* ---- radio.c ---- */
 uint64_t radio_time_us(void);

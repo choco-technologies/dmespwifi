@@ -16,5 +16,5 @@ build/
 image/obj/
 image/*.elf
 image/*.map
-image/*.bin
+image/*.a
 image/esp-idf/

@@ -83,12 +83,19 @@ static int read_config(struct dmdrvi_context *c, dmini_context_t ini)
     return 0;
 }
 
-/* The node is numbered by dmdevfs: /dev/dmespwifi<major>. There is one radio, so the major is 0 */
-static void fill_dev_num(dmdrvi_dev_num_t *dev_num)
+/* The node is named after the interface (dmdevfs has no other way to name it than the driver name and the major, or this name): the friendly
+ * name of the configuration and the number - there is one radio, so 0: /dev/wlan0, where the tools (wifi) look for it by default */
+static void fill_dev_num(const struct dmdrvi_context *c, dmdrvi_dev_num_t *dev_num)
 {
     memset(dev_num, 0, sizeof(*dev_num));
-    dev_num->flags = DMDRVI_NUM_MAJOR;
     dev_num->major = 0;
+    if (Dmod_SnPrintf(dev_num->alt_name, sizeof(dev_num->alt_name), "%s%u", c->iface_name, (unsigned) dev_num->major) < (int) sizeof(dev_num->alt_name))
+        dev_num->flags = DMDRVI_NUM_MAJOR | DMDRVI_NUM_ALT_NAME;
+    else
+    {
+        memset(dev_num->alt_name, 0, sizeof(dev_num->alt_name));
+        dev_num->flags = DMDRVI_NUM_MAJOR;      /* too long a name: /dev/dmespwifi0 */
+    }
 }
 
 static void destroy_context(struct dmdrvi_context *c)
@@ -160,7 +167,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, dmdrvi_context_t, _create, ( dmi
         destroy_context(c);
         return NULL;
     }
-    fill_dev_num(dev_num);
+    fill_dev_num(c, dev_num);
     return c;
 }
 

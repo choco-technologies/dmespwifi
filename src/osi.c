@@ -671,12 +671,26 @@ static void *pool_alloc_locked(size_t size)
     return NULL;
 }
 
-/* (interrupts off) */
-static void pool_free_locked(void *p)
+/* (interrupts off) false: p is not a block in use - not the start of one, or one given back already. Nothing is changed then: marking
+ * it free would write into the middle of somebody's block */
+static bool pool_free_locked(void *p)
 {
-    pool_block_t *b = (pool_block_t *) ((uintptr_t) p - 16u);
-    b->used = 0;
-    uint32_t pos = 0;                       /* join the neighbours that are free */
+    bool found = false;
+    uint32_t pos = 0;
+    while (pos < POOL_SIZE)
+    {
+        pool_block_t *c = (pool_block_t *) (POOL_BASE + pos);
+        if ((void *) (POOL_BASE + pos + 16u) == p)
+        {
+            found = (c->used != 0);
+            c->used = 0;
+            break;
+        }
+        pos += 16u + c->size;
+    }
+    if (!found)
+        return false;
+    pos = 0;                                /* join the neighbours that are free */
     while (pos < POOL_SIZE)
     {
         pool_block_t *c = (pool_block_t *) (POOL_BASE + pos);
@@ -692,6 +706,7 @@ static void pool_free_locked(void *p)
         }
         pos = next;
     }
+    return true;
 }
 
 /* the tasks of the libraries, the thread that sends and the one of the timers all take and give back: the list changes with the interrupts off
@@ -704,11 +719,17 @@ static void *pool_alloc(size_t size)
     return p;
 }
 
+static uint32_t g_pool_bad_frees;           /* (for a debugger) */
+
 static void pool_free(void *p)
 {
     uint32_t ps = cpu_irq_disable();
-    pool_free_locked(p);
+    bool freed = pool_free_locked(p);
+    if (!freed)
+        g_pool_bad_frees++;
     cpu_irq_restore(ps);
+    if (!freed)
+        radio_log("wifi: free of %p, which is not a block of the pool in use\n", p);
 }
 
 void *osi_pool_alloc(size_t size)
@@ -729,6 +750,12 @@ static void osi_free(void *p)
         pool_free(p);
     else
         Dmod_Free(p);
+}
+
+/* free() of the libraries and of the supplicant (image/: malloc() there is the pool): the same as the table's */
+void osi_release(void *p)
+{
+    osi_free(p);
 }
 
 static void *osi_realloc(void *p, size_t size)
