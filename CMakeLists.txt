@@ -74,6 +74,12 @@ target_include_directories(${DMOD_MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/image
 )
 
+# The radio is only on the ESP32-S3 (the firmware links libdmespwifi.a, which gives the Built-in API of image/dmespradio.h): elsewhere the
+# module is built without it (the tests on the host)
+if(NOT DMOD_TOOLS_NAME MATCHES "xtensa")
+    target_compile_definitions(${DMOD_MODULE_NAME} PRIVATE DMESPRADIO_NO_RADIO)
+endif()
+
 target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )

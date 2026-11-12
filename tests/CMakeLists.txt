@@ -30,3 +30,4 @@ if(DMF_GET_EXECUTABLE AND DMOD_LOADER_EXECUTABLE)
 else()
     message(WARNING "dmf-get/dmod_loader not found - 'ctest' will not run ${DMOD_MODULE_NAME}. Build the tools first with -DDMOD_BUILD_TOOLS=ON")
 endif()
+

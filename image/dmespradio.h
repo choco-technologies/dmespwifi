@@ -46,6 +46,8 @@ typedef struct
     X(int32_t, esp_wifi_set_ps,                  (int type),                                           (type)) \
     X(int32_t, esp_wifi_sta_get_ap_info,         (wifi_ap_record_t *record),                           (record))
 
+#ifndef DMESPRADIO_NO_RADIO
+
 #define DMESPRADIO_API(RET, FUNCTION, PARAMS, ARGS)     dmod_dmespradio_api(1.0, RET, _##FUNCTION, PARAMS);
 DMESPRADIO_FUNCTIONS(DMESPRADIO_API)
 
@@ -57,5 +59,17 @@ dmod_dmespradio_api(1.0, int32_t, _supplicant_init, (void));
 
 /* The table of the cryptography for the init config (wpa_crypto_funcs_t) */
 dmod_dmespradio_api(1.0, const void *, _crypto_funcs, (void));
+
+#else
+
+/* A build with no radio (the host: the tests): nothing gives the Built-in API there - the firmware of the ESP32-S3 does - so the driver
+ * gets functions that fail (ESP_FAIL) and does not require it */
+#define DMESPRADIO_NONE(RET, FUNCTION, PARAMS, ARGS)    static inline RET dmespradio_##FUNCTION PARAMS { return (RET) (intptr_t) -1; }
+DMESPRADIO_FUNCTIONS(DMESPRADIO_NONE)
+static inline void dmespradio_init(const dmespradio_host_t *host) { (void) host; }
+static inline int32_t dmespradio_supplicant_init(void) { return -1; }
+static inline const void *dmespradio_crypto_funcs(void) { return NULL; }
+
+#endif
 
 #endif /* DMESPRADIO_H */
