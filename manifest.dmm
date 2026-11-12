@@ -1,0 +1,7 @@
+# Include dynamically generated versions list from latest release
+$include https://github.com/choco-technologies/dmespwifi/releases/download/vlatest/versions.dmm
+
+# Module entries with version placeholder - expanded by $version-available. <cpu_family>, not <arch_name>: the radio is the one of a CPU
+# family and the release workflow packages the module per family (esp32s3)
+dmespwifi https://github.com/choco-technologies/dmespwifi/releases/download/v<version>/dmespwifi-v<version>-<cpu_family>.zip
+dmespwifi_port https://github.com/choco-technologies/dmespwifi/releases/download/v<version>/dmespwifi_port-v<version>-<cpu_family>.zip

@@ -1,0 +1,65 @@
+name: CI
+
+on:
+  push:
+    branches: [ main, master, develop ]
+  pull_request:
+    branches: [ main, master, develop ]
+
+jobs:
+  build-and-test:
+    name: Build and Test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    container:
+      image: chocotechnologies/dmod:1.0.4
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # The ESP32-S3 (the family of the radio): the driver and the port with the library of the radio. The library is built after the
+      # configure step (it needs the headers of dmod that the step lists, build-esp32s3/dmespradio-includes.txt) and before the build,
+      # which packs it into the package of the port; the sources and the libraries of ESP-IDF are fetched by the script
+      - name: Configure dmespwifi for the ESP32-S3
+        run: cmake -S . -B build-esp32s3 -DDMOD_CPU_FAMILY=esp32s3
+
+      - name: Build the library of the radio
+        run: |
+          DMOD_BUILD=$PWD/build-esp32s3 src/port/esp32s3/radio/build.sh
+          test -f src/port/esp32s3/radio/libdmespwifi_port.a
+
+      - name: Build dmespwifi for the ESP32-S3
+        run: |
+          cmake --build build-esp32s3
+          test -f build-esp32s3/packages/dmespwifi.zip
+          test -f build-esp32s3/packages/dmespwifi_port.zip
+          unzip -l build-esp32s3/packages/dmespwifi_port.zip | grep -q lib/libdmespwifi_port.a
+
+      # The host: the driver with the port of x86_64 (no radio: src/port/x86_64), for the tests
+      - name: Build dmespwifi for the host
+        run: |
+          mkdir -p build
+          cd build
+          cmake .. -DDMOD_CPU_FAMILY=x86_64
+          cmake --build .
+
+      - name: Verify module files
+        run: |
+          echo "Checking for module files..."
+          ls -lh build/dmf/
+          test -f build/dmf/dmespwifi.dmf
+          test -f build/dmf/dmespwifi_port.dmf
+          test -f build/dmf/dmespwifi_version.txt
+          test -f build/dmf/test_dmespwifi.dmf
+          echo "Module files present"
+
+      - name: Run tests with dmod_loader
+        run: |
+          export DMOD_DMF_DIR=$(pwd)/build/dmf
+          # The dependencies of dmespwifi (build/dmf/dmespwifi.dmd) but its port: the port of x86_64 is the one built above - it is never
+          # published, so it is not fetched
+          dmf-get install dmnetif -y
+          dmf-get install dmini -y
+          dmod_loader build/dmf/test_dmespwifi.dmf
