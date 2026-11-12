@@ -1,7 +1,14 @@
 #!/bin/bash
 # build the library of the radio: libdmespwifi.a - the libraries of ESP-IDF (the Wi-Fi: net80211, pp, core, phy), the supplicant of hostap from the
-# sources of ESP-IDF (the station only: cfg/sdkconfig.h has the rest switched off, software crypto) and the glue (image.c, supp.c: the Built-in API,
-# DMOD_INC="-I<dmod>/inc -I<the build of dmod: dmod-config.h>"). IDF is the source of the libraries, the sources and the symbols of the ROM (IDF=/path/to/esp-idf; TOOLCHAIN=.../xtensa-esp-elf/bin)
+# sources of ESP-IDF (the station only: cfg/sdkconfig.h has the rest switched off, software crypto) and the glue (image.c, supp.c: the Built-in API).
+# The glue needs the headers of dmod: DMOD_BUILD=<a configured build of the module> (its dmespradio-includes.txt; dmod-dev, a checkout or
+# GitHub alike), or DMOD_INC="-I<dmod>/inc -I<the dir of dmod-config.h>". IDF is the source of the libraries, the sources and the symbols
+# of the ROM (IDF=/path/to/esp-idf; TOOLCHAIN=.../xtensa-esp-elf/bin)
+if [ -z "$DMOD_INC" ] && [ -n "$DMOD_BUILD" ]; then
+  [ -f "$DMOD_BUILD/dmespradio-includes.txt" ] || { echo "no $DMOD_BUILD/dmespradio-includes.txt (configure the module first)"; exit 1; }
+  DMOD_INC=$(sed -n 's|^\(..*\)$|-I\1|p' "$DMOD_BUILD/dmespradio-includes.txt" | tr '\n' ' ')
+fi
+[ -n "$DMOD_INC" ] || { echo "the headers of dmod: DMOD_BUILD=<a configured build of the module> or DMOD_INC=..."; exit 1; }
 cd "$(dirname "$0")"; H=$PWD
 # Without IDF= the sources are fetched (the tag below, shallow, with the two submodules of the libraries) to image/esp-idf; without TOOLCHAIN= the
 # compiler is the one of the PATH

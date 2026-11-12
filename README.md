@@ -39,14 +39,15 @@ firmware: it is the 61 kB of internal RAM that the selector of dmod-boot needs o
 
 ## Building
 
-The library is built first - the package carries it - with the headers of dmod (`dmod_defs.h` and the `dmod-config.h` of a build of dmod,
-e.g. the one the configure step of the module fetches):
+The module is configured like every dmod module: with the installed `dmod-dev` when there is one, otherwise a checkout of dmod
+(`-DDMOD_DIR=...`) or dmod from GitHub (`-DDMOD_USE_INSTALLED_SDK=OFF` fetches it even when `dmod-dev` is installed). The library is
+built after the configure step - it needs the headers of dmod of that build, which the configure step lists in
+`build/dmespradio-includes.txt` - and before the build, which packs it:
 
 ```bash
-cmake -B build -DDMOD_TOOLS_NAME=arch/xtensa/esp32s3          # configure: fetches dmod
-DMOD_INC="-I$PWD/build/_deps/dmod-src/inc -I$PWD/build/_deps/dmod-build" \
-    image/build.sh                  # fetches ESP-IDF v5.2.2 (shallow, to image/esp-idf) and builds image/libdmespwifi.a
-#   IDF=/path/to/esp-idf ...        # ... or with an ESP-IDF that is already there
+cmake -B build -DDMOD_TOOLS_NAME=arch/xtensa/esp32s3
+DMOD_BUILD=$PWD/build image/build.sh              # fetches ESP-IDF v5.2.2 (shallow, to image/esp-idf) and builds image/libdmespwifi.a
+#   IDF=/path/to/esp-idf DMOD_BUILD=... ...       # ... or with an ESP-IDF that is already there
 cmake --build build
 ```
 
