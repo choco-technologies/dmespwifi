@@ -1,0 +1,3 @@
+# DMOD_TOOLS_NAME must match a directory under dmod/configs/arch/...
+#   x86_64   -> arch/x86_64 (the tests on the host: there is no radio - never released)
+set(DMOD_TOOLS_NAME "arch/x86_64" CACHE STRING "Name of the tools configuration")

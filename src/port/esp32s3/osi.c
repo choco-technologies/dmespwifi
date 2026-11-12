@@ -408,12 +408,12 @@ static int32_t osi_task_create(void *entry, const char *name, uint32_t stack_byt
         return 0;
     /* the libraries ask for the stacks of IDF (bytes) and the priorities of IDF; these tasks print and run on a heavier system */
     uint32_t bytes = (stack_bytes * 2u > 8192u) ? stack_bytes * 2u : 8192u;
-    int prio = (g_ctx != NULL) ? g_ctx->priority : DMESPWIFI_DEFAULT_PRIORITY;
+    int prio = (g_radio != NULL) ? g_radio->config.priority : DMESPWIFI_DEFAULT_PRIORITY;
     if ((int) priority < prio)
         prio = (int) priority;
     task->entry = (void (*)(void *)) entry;
     task->param = param;
-    task->thread = dmosi_thread_create(osi_task_main, task, prio, bytes, name, (g_ctx != NULL) ? g_ctx->process : NULL);
+    task->thread = dmosi_thread_create(osi_task_main, task, prio, bytes, name, (g_radio != NULL) ? g_radio->process : NULL);
 
     if (task->thread == NULL)
     {
@@ -471,7 +471,7 @@ static void *osi_task_current(void)
 
 static int32_t osi_task_max_priority(void)
 {
-    return (g_ctx != NULL) ? g_ctx->priority + 2 : DMESPWIFI_DEFAULT_PRIORITY + 2;   /* the libraries take a place below the top of it */
+    return (g_radio != NULL) ? g_radio->config.priority + 2 : DMESPWIFI_DEFAULT_PRIORITY + 2;   /* the libraries take a place below the top of it */
 }
 
 /* ---- timers: the ETSTimer of the libraries, kept in a list of our own and run by a thread of our own ----
@@ -570,8 +570,8 @@ static bool timer_init(void)
         g_timer_wake = dmosi_semaphore_create(0, 1);
     if (g_timer_wake == NULL)
         return false;
-    g_timer_thread = dmosi_thread_create(timer_main, NULL, (g_ctx != NULL) ? g_ctx->priority : DMESPWIFI_DEFAULT_PRIORITY, 8192,
-                                         "wifi-timer", (g_ctx != NULL) ? g_ctx->process : NULL);
+    g_timer_thread = dmosi_thread_create(timer_main, NULL, (g_radio != NULL) ? g_radio->config.priority : DMESPWIFI_DEFAULT_PRIORITY, 8192,
+                                         "wifi-timer", (g_radio != NULL) ? g_radio->process : NULL);
     return g_timer_thread != NULL;
 }
 

@@ -1,6 +1,6 @@
 #!/bin/bash
-# build the library of the radio: libdmespwifi.a - the libraries of ESP-IDF (the Wi-Fi: net80211, pp, core, phy), the supplicant of hostap from the
-# sources of ESP-IDF (the station only: cfg/sdkconfig.h has the rest switched off, software crypto) and the glue (image.c, supp.c: the Built-in API).
+# build the library of the radio: libdmespwifi_port.a (the port of the ESP32-S3 carries it; dmod-boot links it into the firmware) - the libraries of ESP-IDF (the Wi-Fi: net80211, pp, core, phy), the supplicant of hostap from the
+# sources of ESP-IDF (the station only: cfg/sdkconfig.h has the rest switched off, software crypto) and the glue (glue.c, supp.c: the Built-in API).
 # The glue needs the headers of dmod: DMOD_BUILD=<a configured build of the module> (its dmespradio-includes.txt; dmod-dev, a checkout or
 # GitHub alike), or DMOD_INC="-I<dmod>/inc -I<the dir of dmod-config.h>". IDF is the source of the libraries, the sources and the symbols
 # of the ROM (IDF=/path/to/esp-idf; TOOLCHAIN=.../xtensa-esp-elf/bin)
@@ -10,7 +10,7 @@ if [ -z "$DMOD_INC" ] && [ -n "$DMOD_BUILD" ]; then
 fi
 [ -n "$DMOD_INC" ] || { echo "the headers of dmod: DMOD_BUILD=<a configured build of the module> or DMOD_INC=..."; exit 1; }
 cd "$(dirname "$0")"; H=$PWD
-# Without IDF= the sources are fetched (the tag below, shallow, with the two submodules of the libraries) to image/esp-idf; without TOOLCHAIN= the
+# Without IDF= the sources are fetched (the tag below, shallow, with the two submodules of the libraries) to radio/esp-idf; without TOOLCHAIN= the
 # compiler is the one of the PATH
 IDF_TAG=v5.2.2
 if [ -z "$IDF" ]; then
@@ -34,14 +34,14 @@ for f in src/rsn_supp/wpa src/rsn_supp/wpa_ie src/rsn_supp/pmksa_cache src/commo
   $CC $CFLAGS -o "$OUT/$(basename $f).o" -c $W/$f.c || exit 1
 done
 $CC $CFLAGS -DCONFIG_CRYPTO_INTERNAL -o "$OUT/sha1-internal.o" -c $W/src/crypto/sha1-internal.c || exit 1
-for f in image supp; do $CC $CFLAGS $DMOD_INC -o "$OUT/glue_$f.o" -c $f.c || exit 1; done
+for f in glue supp; do $CC $CFLAGS $DMOD_INC -o "$OUT/glue_$f.o" -c $f.c || exit 1; done
 # The library: everything linked into one object (-r) with the symbols of the ROM, then every symbol but the Built-in API made local - what
 # dmod-boot links (dmod_link_builtin) cannot collide with anything of the firmware. The sections keep their names: the linker script of
 # dmod-boot places them (.wifi*iram*, .iram1*, .rodata_wlog_*, .dram1*) and drops what nothing reaches.
 # What the Built-in API does not reach is dropped here already (the registrations are the roots): -r merges the sections of a name, and one
 # merged section would keep everything.
 U=""; for s in $(sed -n 's/^ *X([^,]*, *\([a-z0-9_]*\),.*/\1/p' dmespradio.h) init supplicant_init crypto_funcs; do U="$U -Wl,-u,dmespradio_${s}_registration"; done
-$CC -nostdlib -mlongcalls -r -Wl,--gc-sections $ROM $U "$OUT"/*.o $I/esp_wifi/lib/esp32s3/{libnet80211,libpp,libcore}.a $I/esp_phy/lib/esp32s3/libphy.a -Wl,-Map,libdmespwifi.map -o "$OUT/dmespwifi_radio.o" || exit 1
+$CC -nostdlib -mlongcalls -r -Wl,--gc-sections $ROM $U "$OUT"/*.o $I/esp_wifi/lib/esp32s3/{libnet80211,libpp,libcore}.a $I/esp_phy/lib/esp32s3/libphy.a -Wl,-Map,libdmespwifi_port.map -o "$OUT/dmespwifi_radio.o" || exit 1
 $T/xtensa-esp32s3-elf-objcopy -w -G 'dmespradio_*' --strip-debug --remove-section=.comment --remove-section=.xtensa.info "$OUT/dmespwifi_radio.o" || exit 1
-rm -f libdmespwifi.a; $T/xtensa-esp32s3-elf-ar rcsD libdmespwifi.a "$OUT/dmespwifi_radio.o" || exit 1
-$T/xtensa-esp32s3-elf-size -t libdmespwifi.a | tail -1; echo "undefined: $($T/xtensa-esp32s3-elf-nm -u libdmespwifi.a | awk 'NF==2{printf "%s ", $2}')"
+rm -f libdmespwifi_port.a; $T/xtensa-esp32s3-elf-ar rcsD libdmespwifi_port.a "$OUT/dmespwifi_radio.o" || exit 1
+$T/xtensa-esp32s3-elf-size -t libdmespwifi_port.a | tail -1; echo "undefined: $($T/xtensa-esp32s3-elf-nm -u libdmespwifi_port.a | awk 'NF==2{printf "%s ", $2}')"

@@ -1,16 +1,13 @@
 cmake_minimum_required(VERSION 3.18)
 
-# The radio is the one of a CPU family, so the module is built (and released) per family, not per architecture: esp32s3. x86_64 builds
-# it without the radio (DMESPRADIO_NO_RADIO) for the tests on the host - never released. DMOD_TOOLS_NAME follows the family (it can
-# still be given)
+# The radio is the one of a CPU family: the driver (dmespwifi) is common, the port (dmespwifi_port, src/port/<family>/) is the radio. The
+# module is built and released per family, not per architecture: esp32s3. x86_64 has a port without a radio for the tests on the host -
+# never released. The family selects the tools (src/port/<family>/config.cmake)
 set(DMOD_CPU_FAMILY "esp32s3" CACHE STRING "Target CPU family: esp32s3, or x86_64 (no radio: the tests)")
-if(DMOD_CPU_FAMILY STREQUAL "esp32s3")
-    set(DMOD_TOOLS_NAME "arch/xtensa/esp32s3" CACHE STRING "Name of the tools configuration")
-elseif(DMOD_CPU_FAMILY STREQUAL "x86_64")
-    set(DMOD_TOOLS_NAME "arch/x86_64" CACHE STRING "Name of the tools configuration")
-else()
-    message(FATAL_ERROR "dmespwifi: no radio of the CPU family '${DMOD_CPU_FAMILY}' (esp32s3; x86_64 for the tests)")
+if(NOT EXISTS ${CMAKE_CURRENT_SOURCE_DIR}/src/port/${DMOD_CPU_FAMILY}/config.cmake)
+    message(FATAL_ERROR "dmespwifi: no port for the CPU family '${DMOD_CPU_FAMILY}' (esp32s3; x86_64 for the tests)")
 endif()
+include(${CMAKE_CURRENT_SOURCE_DIR}/src/port/${DMOD_CPU_FAMILY}/config.cmake)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
@@ -87,28 +84,11 @@ set(DMOD_DIF_IMPLS          )
 dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
     # List of source files - can include C and C++ files
     src/dmespwifi.c
-    src/wifi.c
-    src/osi.c
-    src/radio.c
-    src/image.c
 )
 
 target_include_directories(${DMOD_MODULE_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-    ${CMAKE_CURRENT_SOURCE_DIR}/src
-    ${CMAKE_CURRENT_SOURCE_DIR}/image
 )
-
-# The radio is only on the ESP32-S3 (the firmware links libdmespwifi.a, which gives the Built-in API of image/dmespradio.h): elsewhere the
-# module is built without it (the tests on the host)
-if(NOT DMOD_CPU_FAMILY STREQUAL "esp32s3")
-    target_compile_definitions(${DMOD_MODULE_NAME} PRIVATE DMESPRADIO_NO_RADIO)
-endif()
-
-# The glue of the library of the radio (image/build.sh) needs the headers of dmod - the ones of this build, wherever dmod came from (the
-# installed dmod-dev, a checkout, GitHub): their directories, one per line
-file(GENERATE OUTPUT ${CMAKE_BINARY_DIR}/dmespradio-includes.txt
-    CONTENT "$<JOIN:$<TARGET_PROPERTY:${DMOD_MODULE_NAME},INCLUDE_DIRECTORIES>,\n>\n")
 
 target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -126,6 +106,10 @@ dmod_link_modules(${DMOD_MODULE_NAME}
     dmroute
     dmosi
 )
+
+# The radio: the port of the family
+add_subdirectory(src/port)
+target_link_libraries(${DMOD_MODULE_NAME} ${DMOD_MODULE_NAME}_port_if)
 
 enable_testing()
 add_subdirectory(tests)

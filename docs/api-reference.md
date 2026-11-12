@@ -17,5 +17,7 @@ The module is a driver: it is used through its node (`/dev/wlan0`), not through 
 ## Functions
 
 ```c
-const char *dmespwifi_chip_name(void);   /* the chip the radio is on: "ESP32-S3" */
+const char *dmespwifi_chip_name(void);   /* the chip the radio is on: "ESP32-S3" (the port's) */
 ```
+
+The API of the port (the radio of a CPU family) is in `include/dmespwifi_port.h`; see [port-implementation.md](port-implementation.md).

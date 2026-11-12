@@ -13,8 +13,8 @@ build/
 *.tmp
 *.swp
 *~
-image/obj/
-image/*.elf
-image/*.map
-image/*.a
-image/esp-idf/
+# the library of the radio (src/port/esp32s3/radio/build.sh)
+src/port/esp32s3/radio/obj/
+src/port/esp32s3/radio/*.map
+src/port/esp32s3/radio/*.a
+src/port/esp32s3/radio/esp-idf/

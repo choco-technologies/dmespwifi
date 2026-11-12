@@ -11,22 +11,30 @@ driver and the Wi-Fi is dmdrvi's `DMDRVI_IOCTL_WIFI_*` (scan, connect, status, i
 of dmnet work with it as they are. The driver registers the interface with dmnetif itself.
 
 ```
-radio --> libraries of Espressif (libdmespwifi.a, in the firmware) --> dmespwifi (/dev/wlan0) --> dmnetif --> networkd, dhcpc, wifi, ...
+radio --> libraries of Espressif (in the firmware) --> dmespwifi_port (the radio) --> dmespwifi (/dev/wlan0) --> dmnetif --> networkd, dhcpc, wifi, ...
 ```
 
 ## How it is built
 
-The radio is run by the libraries of Espressif (net80211, pp, core, phy: binaries of ESP-IDF) and the supplicant of ESP-IDF. dmod-boot
-stays bare metal - no ESP-IDF, no FreeRTOS of Espressif in the firmware - so the libraries come as **a library of the system**:
+Two modules, like the other drivers of hardware:
 
-- **`image/`** links the libraries, the supplicant (the station only, software crypto) and a little glue into one object, makes every
-  symbol local but the Built-in API of the radio (`image/dmespradio.h`: the functions of the libraries the driver calls, as
-  `dmespradio_<name>`) and packs it as `libdmespwifi.a`. The package carries it (the `lib` resource); dmod-boot links it into the firmware
-  (`dmod_link_builtin`, `DMBOOT_BUILTIN_MODULES` of the board) and its linker script places the sections of the libraries (what ESP-IDF
-  puts in the IRAM is executed from the flash here).
-- **`src/`** is the module. It gives the libraries the system they expect (`src/osi.c`: tasks, queues, semaphores and mutexes on dmosi;
-  timers on a list and a thread of its own; the interrupt of the MAC; memory), the clocks and the PHY calibration (`src/radio.c`), and
-  turns their events and frames into the node (`src/wifi.c`, `src/dmespwifi.c`).
+- **`dmespwifi`** (`src/dmespwifi.c`) is the driver: the node (`/dev/wlan0`), its configuration, the interface of dmnetif, `read()` /
+  `write()` and the ioctls. It knows nothing of the chip: it calls the port.
+- **`dmespwifi_port`** (`src/port/<family>/`, `include/dmespwifi_port.h`) is the radio of a CPU family: it starts the radio, keeps the
+  connection, scans and carries the frames. One per family - `esp32s3`, and `x86_64` with no radio for the tests on the host.
+
+The radio of the ESP32-S3 is run by the libraries of Espressif (net80211, pp, core, phy: binaries of ESP-IDF) and the supplicant of
+ESP-IDF. dmod-boot stays bare metal - no ESP-IDF, no FreeRTOS of Espressif in the firmware - so the libraries come as **a library of the
+system**:
+
+- **`src/port/esp32s3/radio/`** links the libraries, the supplicant (the station only, software crypto) and a little glue into one object,
+  makes every symbol local but the Built-in API of the radio (`dmespradio.h`: the functions of the libraries the port calls, as
+  `dmespradio_<name>`) and packs it as `libdmespwifi_port.a`. The package of the port carries it (the `lib` resource); dmod-boot links it
+  into the firmware (`dmod_link_builtin`, `DMBOOT_BUILTIN_MODULES dmespwifi_port`) and its linker script places the sections of the
+  libraries (what ESP-IDF puts in the IRAM is executed from the flash here).
+- **`src/port/esp32s3/`** gives the libraries the system they expect (`osi.c`: tasks, queues, semaphores and mutexes on dmosi; timers on a
+  list and a thread of their own; the interrupt of the MAC - line 0 only; memory), the clocks and the PHY calibration (`radio.c`), and
+  starts the radio and turns its events and frames into the API of the port (`wifi.c`, `port.c`).
 
 The memory of the radio (the buffers the MAC reaches by DMA, and what the libraries allocate) is not taken from the heap of the
 firmware: it is the 61 kB of internal RAM that the selector of dmod-boot needs only until it starts the bank (`0x3fcda000..0x3fce9700`).
@@ -44,13 +52,14 @@ The module is configured like every dmod module: with the installed `dmod-dev` w
 built after the configure step - it needs the headers of dmod of that build, which the configure step lists in
 `build/dmespradio-includes.txt` - and before the build, which packs it:
 
-The module is built for a CPU family, not an architecture - the radio is the one of the chip: `DMOD_CPU_FAMILY=esp32s3` (the default;
-it selects the tools, `arch/xtensa/esp32s3`). `x86_64` builds it without the radio, for the tests on the host; it is never released.
-The release has one package per family (`dmespwifi-v<version>-esp32s3.zip`, `<cpu_family>` in [manifest.dmm](manifest.dmm)).
+The modules are built for a CPU family, not an architecture - the radio is the one of the chip: `DMOD_CPU_FAMILY=esp32s3` (the default;
+`src/port/esp32s3/config.cmake` selects the tools, `arch/xtensa/esp32s3`). `x86_64` builds the port without a radio, for the tests on
+the host; it is never released. The release has the packages of one family each (`dmespwifi-v<version>-esp32s3.zip`,
+`dmespwifi_port-v<version>-esp32s3.zip`; `<cpu_family>` in [manifest.dmm](manifest.dmm)).
 
 ```bash
 cmake -B build                                    # DMOD_CPU_FAMILY=esp32s3
-DMOD_BUILD=$PWD/build image/build.sh              # fetches ESP-IDF v5.2.2 (shallow, to image/esp-idf) and builds image/libdmespwifi.a
+DMOD_BUILD=$PWD/build src/port/esp32s3/radio/build.sh   # fetches ESP-IDF v5.2.2 (shallow, to radio/esp-idf), builds radio/libdmespwifi_port.a
 #   IDF=/path/to/esp-idf DMOD_BUILD=... ...       # ... or with an ESP-IDF that is already there
 cmake --build build
 ```
@@ -91,9 +100,9 @@ when the console is gone. No password and no key is ever written to it.
 ## Limits
 
 - A station only (no access point), 2.4 GHz, open and WPA2-PSK networks; the cryptography of the supplicant is software.
-- One radio: the libraries have no context, so there is one node.
+- One radio: the libraries have no context, so there is one node; the API of the port has no instance.
 - Tested on the Waveshare ESP32-S3-LCD-2.8 (ESP32-S3FN16R8) and the LILYGO T-Deck Pro (ESP32-S3).
 
 ## License
 
-MIT, see [LICENSE](LICENSE). The libraries in `libdmespwifi.a` are Espressif's (ESP-IDF, Apache 2.0).
+MIT, see [LICENSE](LICENSE). The libraries in `libdmespwifi_port.a` are Espressif's (ESP-IDF, Apache 2.0).

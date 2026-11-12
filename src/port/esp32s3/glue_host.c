@@ -1,5 +1,5 @@
 /*
- * The radio (the libraries of Espressif and the supplicant) is a library of the system that dmod-boot links (image/, dmod_link_builtin): the
+ * The radio (the libraries of Espressif and the supplicant) is a library of the system that dmod-boot links (radio/: libdmespwifi_port.a, dmod_link_builtin): the
  * driver calls it through the Built-in API (dmespradio.h). This gives it what it needs of the system.
  */
 #include "private.h"
@@ -21,7 +21,7 @@ static int host_vprintf(const char *format, va_list args)
 
 static const dmespradio_host_t g_host = { .free = host_free, .osi = &g_osi, .vprintf = host_vprintf };
 
-bool image_load(void)
+bool glue_host_start(void)
 {
     dmespradio_init(&g_host);
     return true;

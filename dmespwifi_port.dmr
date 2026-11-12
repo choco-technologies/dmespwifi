@@ -1,0 +1,30 @@
+# DMOD Resource File for dmespwifi_port
+# This file specifies where resources should be installed
+
+# === Core Module ===
+# Main module file - always installed
+dmf=./${module}.dmf => ${destination}/${module}.dmf [origin=${dmf_dir}/${module}.dmf]
+
+# Compressed module
+dmfc=./${module}.dmfc => ${destination}/${module}.dmfc [origin=${build_dir}/dmfc/${module}.dmfc]
+
+# Dependencies file (if exists)
+dmd=./${module}.dmd => ${destination}/${module}.dmd [origin=${dmf_dir}/${module}.dmd]
+
+# Version information
+version=./${module}_version.txt => ${destination}/${module}_version.txt [origin=${dmf_dir}/${module}_version.txt]
+
+# === Header Files ===
+# Full include directory with all headers and generated platform definitions header
+inc=./include => ${destination}/${module}/include [origin=${repo_dir}/include] [origin=${build_dir}/src/port/${module}_defs.h]
+
+# === The library of the radio (ESP32-S3) ===
+# The libraries of Espressif, the supplicant and the Built-in API dmespradio (src/port/esp32s3/radio/build.sh): a library of the system,
+# dmod-boot links it into the firmware (dmod_link_builtin, DMBOOT_BUILTIN_MODULES dmespwifi_port)
+lib=./lib/lib${module}.a => ${destination}/${module}/lib/lib${module}.a [origin=${repo_dir}/src/port/esp32s3/radio/lib${module}.a]
+
+# === License ===
+license=./LICENSE => ${destination}/${module}/LICENSE [origin=${repo_dir}/LICENSE]
+
+# Adding itself (dmf-get reads where the resources are from it: the library of the system for dmod_link_builtin)
+dmr=./${module}.dmr => ${destination}/${module}/${module}.dmr [origin=${repo_dir}/${module}.dmr]

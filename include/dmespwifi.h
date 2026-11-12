@@ -8,8 +8,8 @@
  * driver, the Wi-Fi is dmdrvi's DMDRVI_IOCTL_WIFI_* (scan, connect, status, info) - the `wifi` tool of dmnet works with it - and the driver
  * registers the interface with dmnetif itself.
  *
- * The radio is run by the libraries of Espressif, which live in an image of their own in the flash (image/): this module only gives
- * them the system they run on.
+ * This module is the driver (the node, the configuration, the interface); the radio is its port's - dmespwifi_port, one per CPU family
+ * (include/dmespwifi_port.h).
  */
 #include "dmespwifi_defs.h"
 

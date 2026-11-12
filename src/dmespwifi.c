@@ -1,17 +1,41 @@
 #define DMOD_ENABLE_REGISTRATION    ON
 #include "dmod.h"
-#include "dmespwifi.h"
-#include "private.h"
+#include "dmosi.h"
+#include "dmdrvi.h"
 #include "dmini.h"
 #include "dmnetif.h"
+#include "dmespwifi.h"
+#include "dmespwifi_port.h"
 #include <errno.h>
 #include <string.h>
 
 /*
- * dmespwifi: a network node on the Wi-Fi of the chip itself (ESP32-S3). It is the same node as dmesphosted's: read() and write() are
- * 802.3 frames, DMDRVI_IOCTL_NET_* work as for any network driver, the Wi-Fi is DMDRVI_IOCTL_WIFI_* (the `wifi` tool of dmnet works with
- * it) and the driver registers the interface with dmnetif itself.
+ * dmespwifi: a network node on the Wi-Fi of the chip itself. It is the same node as dmesphosted's: read() and write() are 802.3 frames,
+ * DMDRVI_IOCTL_NET_* work as for any network driver, the Wi-Fi is DMDRVI_IOCTL_WIFI_* (the `wifi` tool of dmnet works with it) and the
+ * driver registers the interface with dmnetif itself.
+ *
+ * This is the driver: the node, its configuration and the interface. The radio is the port's (dmespwifi_port, src/port/<family>/).
  */
+
+#define DMESPWIFI_CONTEXT_MAGIC         0x46575345u     /* "ESWF" */
+#define DMESPWIFI_READ_TIMEOUT_MS       50u
+#define DMESPWIFI_DEFAULT_IFACE         "wlan"          /* the friendly name: the interface is <name><number> */
+#define DMESPWIFI_IFACE_NUMBERS         8u              /* how many numbers are tried when the name is taken */
+#define DMESPWIFI_DEFAULT_PRIORITY      3
+#define DMESPWIFI_DEFAULT_LOG_LEVEL     1
+
+struct dmdrvi_context
+{
+    uint32_t        magic;
+    dmosi_mutex_t   lock;               /* the fields below */
+    char *          iface_name;         /* the friendly name ("wlan"): the interface is <name><number> */
+    unsigned        major;              /* the number of the node */
+    char *          node_path;
+    void *          iface;              /* the dmnetif interface */
+    bool            radio_ready;        /* the port told that the radio answers */
+    int             priority;           /* of the threads of the radio */
+    int             log_level;          /* of the radio */
+};
 
 static bool is_valid_context(struct dmdrvi_context *c)
 {
@@ -23,13 +47,13 @@ static bool is_valid_context(struct dmdrvi_context *c)
 static void iface_ensure(struct dmdrvi_context *c)
 {
     dmosi_mutex_lock(c->lock);
-    bool ready = c->started && c->node_path != NULL && c->iface == NULL;
+    bool ready = c->radio_ready && c->node_path != NULL && c->iface == NULL;
     char *path = ready ? Dmod_StrDup(c->node_path) : NULL;
     dmosi_mutex_unlock(c->lock);
     if (path == NULL)
         return;
-    /* The name of the interface: the friendly name of the configuration and a number. The number is the one of the node (/dev/dmespwifi<major>);
-     * when another driver already has that name (e.g. dmesphosted's wlan0), the next free one */
+    /* The name of the interface: the friendly name of the configuration and a number. The number is the one of the node; when another
+     * driver already has that name (e.g. dmesphosted's wlan0), the next free one */
     char name[DMNETIF_NAME_MAX_LEN + 1];
     void *iface = NULL;
     for (unsigned number = c->major; number < c->major + DMESPWIFI_IFACE_NUMBERS; number++)
@@ -55,8 +79,13 @@ static void iface_ensure(struct dmdrvi_context *c)
     Dmod_Free(path);
 }
 
-void dmespwifi_radio_ready(struct dmdrvi_context *c)
+/* (from the thread of the radio, once it answers) */
+static void radio_ready(void *arg)
 {
+    struct dmdrvi_context *c = arg;
+    dmosi_mutex_lock(c->lock);
+    c->radio_ready = true;
+    dmosi_mutex_unlock(c->lock);
     iface_ensure(c);
 }
 
@@ -67,7 +96,7 @@ static int read_config(struct dmdrvi_context *c, dmini_context_t ini)
     const char *name = dmini_get_string(ini, NULL, "interface", DMESPWIFI_DEFAULT_IFACE);
     c->iface_name = Dmod_StrDup((name != NULL && name[0] != '\0') ? name : DMESPWIFI_DEFAULT_IFACE);
     c->priority = dmini_get_int(ini, NULL, "thread_priority", DMESPWIFI_DEFAULT_PRIORITY);
-    c->log_level = dmini_get_int(ini, NULL, "log_level", 1);        /* of the libraries: 0 error, 1 warning, 2 info, 3 debug, 4 verbose */
+    c->log_level = dmini_get_int(ini, NULL, "log_level", DMESPWIFI_DEFAULT_LOG_LEVEL);
     if (c->iface_name == NULL)
         return -ENOMEM;
     if (c->log_level < 0 || c->log_level > 4)
@@ -100,22 +129,11 @@ static void fill_dev_num(const struct dmdrvi_context *c, dmdrvi_dev_num_t *dev_n
 
 static void destroy_context(struct dmdrvi_context *c)
 {
-    wifi_stop(c);
+    dmespwifi_port_radio_stop();
     if (c->iface != NULL)
         dmnetif_unregister(c->iface);
-    if (c->process != NULL)
-        dmosi_process_destroy(c->process);
-    if (c->rx_ready != NULL)
-        dmosi_semaphore_destroy(c->rx_ready);
-    if (c->scan_done != NULL)
-        dmosi_semaphore_destroy(c->scan_done);
-    if (c->wake != NULL)
-        dmosi_semaphore_destroy(c->wake);
-    if (c->scan_lock != NULL)
-        dmosi_mutex_destroy(c->scan_lock);
     if (c->lock != NULL)
         dmosi_mutex_destroy(c->lock);
-    Dmod_Free(c->rx_frames);
     Dmod_Free(c->node_path);
     Dmod_Free(c->iface_name);
     c->magic = 0;
@@ -127,19 +145,17 @@ static void destroy_context(struct dmdrvi_context *c)
 int dmod_init(const Dmod_Config_t *Config)
 {
     (void) Config;
-    DMOD_LOG_INFO("dmespwifi Wi-Fi driver module initialized\n");
     return 0;
 }
 
 int dmod_deinit(void)
 {
-    DMOD_LOG_INFO("dmespwifi Wi-Fi driver module deinitialized\n");
     return 0;
 }
 
 dmod_dmespwifi_api_declaration(1.0, const char *, _chip_name, ( void ))
 {
-    return "ESP32-S3";
+    return dmespwifi_port_chip_name();
 }
 
 /* ---- DMDRVI ---- */
@@ -154,16 +170,17 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, dmdrvi_context_t, _create, ( dmi
     memset(c, 0, sizeof(*c));
     c->magic = DMESPWIFI_CONTEXT_MAGIC;
     c->lock = dmosi_mutex_create(false);
-    c->scan_lock = dmosi_mutex_create(false);
-    c->rx_ready = dmosi_semaphore_create(0, DMESPWIFI_RX_FRAMES);
-    c->scan_done = dmosi_semaphore_create(0, 1);
-    c->wake = dmosi_semaphore_create(0, 1);
-    c->rx_frames = Dmod_Malloc(DMESPWIFI_RX_FRAMES * sizeof(frame_t));
-    c->process = dmosi_process_create("dmespwifi", Dmod_GetCurrentModuleName(), NULL);
-    if (c->lock == NULL || c->scan_lock == NULL || c->rx_ready == NULL || c->scan_done == NULL || c->wake == NULL || c->rx_frames == NULL ||
-        read_config(c, config) != 0 || wifi_start(c) != 0)
+    if (c->lock == NULL || read_config(c, config) != 0)
     {
         DMOD_LOG_ERROR("dmespwifi: failed to create the context\n");
+        destroy_context(c);
+        return NULL;
+    }
+    const dmespwifi_port_config_t radio = { .priority = c->priority, .log_level = c->log_level, .ready = radio_ready, .arg = c };
+    int ret = dmespwifi_port_radio_start(&radio);
+    if (ret != 0)
+    {
+        DMOD_LOG_ERROR("dmespwifi: the radio did not start (%d)\n", ret);
         destroy_context(c);
         return NULL;
     }
@@ -213,23 +230,10 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, dmdrvi_ssize_t, _read, ( dmdrvi_
         return -EINVAL;
     if (!is_valid_context(context) || buffer == NULL || size == 0)
         return 0;
-    dmosi_mutex_lock(context->lock);
-    bool running = context->running;
-    dmosi_mutex_unlock(context->lock);
-    if (!running || dmosi_semaphore_wait(context->rx_ready, 1, DMESPWIFI_READ_TIMEOUT_MS) != 0)
+    size_t received = 0;
+    if (dmespwifi_port_receive_frame(buffer, size, &received, DMESPWIFI_READ_TIMEOUT_MS) != 0)
         return 0;
-    dmosi_mutex_lock(context->lock);
-    if (context->rx_tail == context->rx_head)
-    {
-        dmosi_mutex_unlock(context->lock);
-        return 0;
-    }
-    frame_t *f = &context->rx_frames[context->rx_tail];
-    size_t n = (f->length < size) ? f->length : size;
-    memcpy(buffer, f->data, n);
-    context->rx_tail = (context->rx_tail + 1u) % DMESPWIFI_RX_FRAMES;
-    dmosi_mutex_unlock(context->lock);
-    return (dmdrvi_ssize_t) n;
+    return (dmdrvi_ssize_t) received;
 }
 
 /* One 802.3 frame to send; 0 when it cannot go (not connected) */
@@ -240,7 +244,7 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, dmdrvi_ssize_t, _write, ( dmdrvi
         return -EINVAL;
     if (!is_valid_context(context) || buffer == NULL || size == 0)
         return 0;
-    return wifi_send_frame(context, buffer, size) == 0 ? (dmdrvi_ssize_t) size : 0;
+    return dmespwifi_port_transmit_frame(buffer, size) == 0 ? (dmdrvi_ssize_t) size : 0;
 }
 
 static bool ioctl_needs_arg(int command)
@@ -270,41 +274,33 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, int, _ioctl, ( dmdrvi_context_t 
     switch (command)
     {
         case DMDRVI_IOCTL_NET_GET_MAC_ADDR:
-        {
-            static const uint8_t none[DMDRVI_WIFI_MAC_LEN] = { 0 };
-            dmosi_mutex_lock(context->lock);
-            bool known = context->started && memcmp(context->mac, none, sizeof(none)) != 0;
-            memcpy(((dmdrvi_net_mac_addr_t *) arg)->addr, context->mac, DMDRVI_WIFI_MAC_LEN);
-            dmosi_mutex_unlock(context->lock);
-            return known ? 0 : -ENODEV;
-        }
+            return dmespwifi_port_get_mac(((dmdrvi_net_mac_addr_t *) arg)->addr);
         case DMDRVI_IOCTL_NET_SET_MAC_ADDR:
             return -ENOTSUP;                    /* the chip's own */
         case DMDRVI_IOCTL_NET_GET_LINK_STATUS:
-            dmosi_mutex_lock(context->lock);
-            *(dmdrvi_net_link_status_t *) arg = (context->state == DMDRVI_WIFI_STATE_CONNECTED) ? DMDRVI_NET_LINK_UP : DMDRVI_NET_LINK_DOWN;
-            dmosi_mutex_unlock(context->lock);
+        {
+            dmdrvi_wifi_status_t status;
+            dmespwifi_port_get_status(&status);
+            *(dmdrvi_net_link_status_t *) arg = (status.state == DMDRVI_WIFI_STATE_CONNECTED) ? DMDRVI_NET_LINK_UP : DMDRVI_NET_LINK_DOWN;
             return 0;
+        }
         case DMDRVI_IOCTL_NET_START:
         case DMDRVI_IOCTL_NET_STOP:
-            dmosi_mutex_lock(context->lock);
-            context->running = (command == DMDRVI_IOCTL_NET_START);
-            if (command == DMDRVI_IOCTL_NET_STOP)
-                context->rx_head = context->rx_tail = 0;
-            dmosi_mutex_unlock(context->lock);
+            dmespwifi_port_set_running(command == DMDRVI_IOCTL_NET_START);
             return 0;
         case DMDRVI_IOCTL_WIFI_GET_INFO:
-            wifi_get_info(context, (dmdrvi_wifi_info_t *) arg);
+            dmespwifi_port_get_info((dmdrvi_wifi_info_t *) arg);
+            memcpy(((dmdrvi_wifi_info_t *) arg)->driver, "dmespwifi", sizeof("dmespwifi"));
             return 0;
         case DMDRVI_IOCTL_WIFI_GET_STATUS:
-            wifi_get_status(context, (dmdrvi_wifi_status_t *) arg);
+            dmespwifi_port_get_status((dmdrvi_wifi_status_t *) arg);
             return 0;
         case DMDRVI_IOCTL_WIFI_CONNECT:
-            return wifi_connect(context, (const dmdrvi_wifi_connect_t *) arg);
+            return dmespwifi_port_connect((const dmdrvi_wifi_connect_t *) arg);
         case DMDRVI_IOCTL_WIFI_DISCONNECT:
-            return wifi_disconnect(context);
+            return dmespwifi_port_disconnect();
         case DMDRVI_IOCTL_WIFI_SCAN:
-            return wifi_scan(context, (dmdrvi_wifi_scan_t *) arg);
+            return dmespwifi_port_scan((dmdrvi_wifi_scan_t *) arg);
         default:
             return -ENOTTY;                     /* including the commands dmdevfs probes every node with */
     }

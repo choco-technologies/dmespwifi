@@ -46,8 +46,8 @@ jobs:
 
           # The library of the radio (the package carries it): the sources and the libraries of ESP-IDF are fetched by the script; the
           # glue needs the headers of dmod, which the configure step above lists (dmespradio-includes.txt)
-          DMOD_BUILD=$PWD ../image/build.sh
-          test -f ../image/libdmespwifi.a
+          DMOD_BUILD=$PWD ../src/port/esp32s3/radio/build.sh
+          test -f ../src/port/esp32s3/radio/libdmespwifi_port.a
 
           cmake --build .
 
