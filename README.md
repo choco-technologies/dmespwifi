@@ -44,8 +44,12 @@ The module is configured like every dmod module: with the installed `dmod-dev` w
 built after the configure step - it needs the headers of dmod of that build, which the configure step lists in
 `build/dmespradio-includes.txt` - and before the build, which packs it:
 
+The module is built for a CPU family, not an architecture - the radio is the one of the chip: `DMOD_CPU_FAMILY=esp32s3` (the default;
+it selects the tools, `arch/xtensa/esp32s3`). `x86_64` builds it without the radio, for the tests on the host; it is never released.
+The release has one package per family (`dmespwifi-v<version>-esp32s3.zip`, `<cpu_family>` in [manifest.dmm](manifest.dmm)).
+
 ```bash
-cmake -B build -DDMOD_TOOLS_NAME=arch/xtensa/esp32s3
+cmake -B build                                    # DMOD_CPU_FAMILY=esp32s3
 DMOD_BUILD=$PWD/build image/build.sh              # fetches ESP-IDF v5.2.2 (shallow, to image/esp-idf) and builds image/libdmespwifi.a
 #   IDF=/path/to/esp-idf DMOD_BUILD=... ...       # ... or with an ESP-IDF that is already there
 cmake --build build

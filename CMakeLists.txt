@@ -1,5 +1,17 @@
 cmake_minimum_required(VERSION 3.18)
 
+# The radio is the one of a CPU family, so the module is built (and released) per family, not per architecture: esp32s3. x86_64 builds
+# it without the radio (DMESPRADIO_NO_RADIO) for the tests on the host - never released. DMOD_TOOLS_NAME follows the family (it can
+# still be given)
+set(DMOD_CPU_FAMILY "esp32s3" CACHE STRING "Target CPU family: esp32s3, or x86_64 (no radio: the tests)")
+if(DMOD_CPU_FAMILY STREQUAL "esp32s3")
+    set(DMOD_TOOLS_NAME "arch/xtensa/esp32s3" CACHE STRING "Name of the tools configuration")
+elseif(DMOD_CPU_FAMILY STREQUAL "x86_64")
+    set(DMOD_TOOLS_NAME "arch/x86_64" CACHE STRING "Name of the tools configuration")
+else()
+    message(FATAL_ERROR "dmespwifi: no radio of the CPU family '${DMOD_CPU_FAMILY}' (esp32s3; x86_64 for the tests)")
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 if(NOT DEFINED DMOD_MODULE_VERSION)
@@ -89,7 +101,7 @@ target_include_directories(${DMOD_MODULE_NAME} PRIVATE
 
 # The radio is only on the ESP32-S3 (the firmware links libdmespwifi.a, which gives the Built-in API of image/dmespradio.h): elsewhere the
 # module is built without it (the tests on the host)
-if(NOT DMOD_TOOLS_NAME MATCHES "xtensa")
+if(NOT DMOD_CPU_FAMILY STREQUAL "esp32s3")
     target_compile_definitions(${DMOD_MODULE_NAME} PRIVATE DMESPRADIO_NO_RADIO)
 endif()
 
