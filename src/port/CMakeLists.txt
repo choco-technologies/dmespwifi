@@ -2,7 +2,8 @@
 #               dmespwifi_port Module Configuration
 # ======================================================================
 # The radio of a CPU family (DMOD_CPU_FAMILY): src/port/<family>/. esp32s3 is the radio of the chip, run by the libraries of Espressif
-# (esp32s3/radio/: libdmespwifi_port.a, which the package carries and dmod-boot links into the firmware); x86_64 has no radio (the tests).
+# (esp32s3/radio/: libdmespwifi_port.a, which the package carries and the firmware links - it is required as "@builtin"); x86_64 has no
+# radio (the tests).
 
 # Name of the module
 set(DMOD_MODULE_NAME        dmespwifi_port)
@@ -48,6 +49,10 @@ target_include_directories(${DMOD_MODULE_NAME} BEFORE PRIVATE
 
 if(DMOD_CPU_FAMILY STREQUAL "esp32s3")
     target_include_directories(${DMOD_MODULE_NAME} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/esp32s3/radio)
+
+    # The port calls the libraries of Espressif through the Built-in API dmespradio: the library of the radio is the "lib" resource of this
+    # package, which the system that carries the module links (dmod_link_builtin DEPENDENCIES): "dmespwifi_port@<version> @builtin" in its .dmd
+    dmod_require_builtin(${DMOD_MODULE_NAME} ${DMOD_MODULE_NAME}@${DMOD_MODULE_VERSION})
 
     # The glue of the library of the radio (esp32s3/radio/build.sh) needs the headers of dmod - the ones of this build, wherever dmod came
     # from (the installed dmod-dev, a checkout, GitHub): their directories, one per line
