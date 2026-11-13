@@ -37,7 +37,10 @@ typedef struct
     dmosi_process_t         process;
     dmosi_thread_t          control_thread;
     bool                    stop;
-    bool                    started;            /* esp_wifi_start() done: the station exists */
+    bool                    started;            /* esp_wifi_start() done and not stopped since: the station exists (the radio is on) */
+    bool                    booting;            /* the control thread is still starting the radio */
+    bool                    up;                 /* the libraries are initialized: the station can be stopped and started */
+    dmosi_mutex_t           power_lock;         /* one switch of the radio at a time (wifi_set_enabled) */
     uint8_t                 mac[DMDRVI_WIFI_MAC_LEN];
 
     /* the network */
@@ -93,6 +96,7 @@ void  wifi_stop(void);
 int   wifi_scan(radio_t *radio, dmdrvi_wifi_scan_t *scan);
 int   wifi_connect(radio_t *radio, const dmdrvi_wifi_connect_t *request);
 int   wifi_disconnect(radio_t *radio);
+int   wifi_set_enabled(radio_t *radio, bool enabled);
 void  wifi_get_status(radio_t *radio, dmdrvi_wifi_status_t *status);
 void  wifi_get_info(radio_t *radio, dmdrvi_wifi_info_t *info);
 int   wifi_send_frame(radio_t *radio, const void *frame, size_t size);

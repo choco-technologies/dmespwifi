@@ -57,6 +57,12 @@ dmod_dmespwifi_port_api_declaration(1.0, int, _connect, ( const dmdrvi_wifi_conn
     return -ENODEV;
 }
 
+dmod_dmespwifi_port_api_declaration(1.0, int, _set_enabled, ( bool enabled ))
+{
+    (void) enabled;
+    return -ENODEV;
+}
+
 dmod_dmespwifi_port_api_declaration(1.0, int, _disconnect, ( void ))
 {
     return -ENODEV;

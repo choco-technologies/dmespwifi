@@ -258,6 +258,7 @@ static bool ioctl_needs_arg(int command)
         case DMDRVI_IOCTL_WIFI_GET_STATUS:
         case DMDRVI_IOCTL_WIFI_CONNECT:
         case DMDRVI_IOCTL_WIFI_SCAN:
+        case DMDRVI_IOCTL_WIFI_SET_ENABLED:
             return true;
         default:
             return false;
@@ -301,6 +302,8 @@ dmod_dmdrvi_dif_api_declaration(2.0, dmespwifi, int, _ioctl, ( dmdrvi_context_t 
             return dmespwifi_port_disconnect();
         case DMDRVI_IOCTL_WIFI_SCAN:
             return dmespwifi_port_scan((dmdrvi_wifi_scan_t *) arg);
+        case DMDRVI_IOCTL_WIFI_SET_ENABLED:
+            return dmespwifi_port_set_enabled(*(const int *) arg != 0);
         default:
             return -ENOTTY;                     /* including the commands dmdevfs probes every node with */
     }
