@@ -29,9 +29,10 @@ system**:
 
 - **`src/port/esp32s3/radio/`** links the libraries, the supplicant (the station only, software crypto) and a little glue into one object,
   makes every symbol local but the Built-in API of the radio (`dmespradio.h`: the functions of the libraries the port calls, as
-  `dmespradio_<name>`) and packs it as `libdmespwifi_port.a`. The package of the port carries it (the `lib` resource); dmod-boot links it
-  into the firmware (`dmod_link_builtin`, `DMBOOT_BUILTIN_MODULES dmespwifi_port`) and its linker script places the sections of the
-  libraries (what ESP-IDF puts in the IRAM is executed from the flash here).
+  `dmespradio_<name>`) and packs it as `libdmespwifi_port.a`. The package of the port carries it (the `lib` resource) and requires it:
+  `dmespwifi_port@<version> @builtin` in the `.dmd` of the port (`dmod_require_builtin`), so whatever carries the module links it - dmod-boot
+  finds it in the dependencies of its modules (`dmod_link_builtin(... DEPENDENCIES ...)`) - and its linker script places the sections of
+  the libraries (what ESP-IDF puts in the IRAM is executed from the flash here).
 - **`src/port/esp32s3/`** gives the libraries the system they expect (`osi.c`: tasks, queues, semaphores and mutexes on dmosi; timers on a
   list and a thread of their own; the interrupt of the MAC - line 0 only; memory), the clocks and the PHY calibration (`radio.c`), and
   starts the radio and turns its events and frames into the API of the port (`wifi.c`, `port.c`).

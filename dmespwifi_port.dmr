@@ -20,7 +20,7 @@ inc=./include => ${destination}/${module}/include [origin=${repo_dir}/include] [
 
 # === The library of the radio (ESP32-S3) ===
 # The libraries of Espressif, the supplicant and the Built-in API dmespradio (src/port/esp32s3/radio/build.sh): a library of the system,
-# dmod-boot links it into the firmware (dmod_link_builtin, DMBOOT_BUILTIN_MODULES dmespwifi_port)
+# the firmware links it: the module requires it ("dmespwifi_port@<version> @builtin" in its .dmd, dmod_require_builtin)
 lib=./lib/lib${module}.a => ${destination}/${module}/lib/lib${module}.a [origin=${repo_dir}/src/port/esp32s3/radio/lib${module}.a]
 
 # === License ===
