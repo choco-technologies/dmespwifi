@@ -38,7 +38,7 @@ dmod_add_library(${DMOD_MODULE_NAME} ${DMOD_MODULE_VERSION}
 # dmosi: threads, locks, queues, timers; dmdrvi: the Wi-Fi types of the API (dmdrvi_ioctl.h)
 dmod_link_modules(${DMOD_MODULE_NAME}
     dmosi
-    dmdrvi@>=2.13
+    dmdrvi@>=2.15
 )
 
 target_include_directories(${DMOD_MODULE_NAME} BEFORE PRIVATE

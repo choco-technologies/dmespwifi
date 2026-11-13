@@ -100,7 +100,7 @@ target_include_directories(${DMOD_MODULE_NAME}_if INTERFACE
 #   )
 # dmdrvi: the driver interface, dmini: the configuration, dmnetif: the interface of the network, dmosi: threads, locks, queues, timers
 dmod_link_modules(${DMOD_MODULE_NAME}
-    dmdrvi@>=2.13
+    dmdrvi@>=2.15
     dmini
     dmnetif
     dmroute

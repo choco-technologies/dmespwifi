@@ -69,7 +69,8 @@ int wifi_event(const char *base, int32_t id, void *data, size_t size)
             const wifi_event_sta_disconnected_t *e = data;
             dmosi_mutex_lock(c->lock);
             c->reason = (e != NULL) ? e->reason : 0;
-            c->state = c->want_connected ? DMDRVI_WIFI_STATE_CONNECTING : DMDRVI_WIFI_STATE_IDLE;
+            /* (a radio that was switched off tells it too: it stays off) */
+            c->state = !c->started ? DMDRVI_WIFI_STATE_OFF : c->want_connected ? DMDRVI_WIFI_STATE_CONNECTING : DMDRVI_WIFI_STATE_IDLE;
             dmosi_mutex_unlock(c->lock);
             radio_log("wifi: disconnected, reason %u\n", (unsigned) c->reason);
             dmosi_semaphore_post(c->wake, 1);       /* the control thread connects again */
@@ -225,6 +226,8 @@ static void control_main(void *arg)
     int ret = radio_up(c);
     dmosi_mutex_lock(c->lock);
     c->started = (ret == 0);
+    c->up = (ret == 0);
+    c->booting = false;
     c->state = (ret == 0) ? DMDRVI_WIFI_STATE_IDLE : DMDRVI_WIFI_STATE_OFF;
     c->resets++;
     dmosi_mutex_unlock(c->lock);
@@ -260,6 +263,8 @@ static void radio_free(radio_t *c)
         dmosi_semaphore_destroy(c->wake);
     if (c->scan_lock != NULL)
         dmosi_mutex_destroy(c->scan_lock);
+    if (c->power_lock != NULL)
+        dmosi_mutex_destroy(c->power_lock);
     if (c->lock != NULL)
         dmosi_mutex_destroy(c->lock);
     Dmod_Free(c->rx_frames);
@@ -277,12 +282,14 @@ int wifi_start(const dmespwifi_port_config_t *config)
     c->config = *config;
     c->lock = dmosi_mutex_create(false);
     c->scan_lock = dmosi_mutex_create(false);
+    c->power_lock = dmosi_mutex_create(false);
+    c->booting = true;
     c->rx_ready = dmosi_semaphore_create(0, DMESPWIFI_RX_FRAMES);
     c->scan_done = dmosi_semaphore_create(0, 1);
     c->wake = dmosi_semaphore_create(0, 1);
     c->rx_frames = Dmod_Malloc(DMESPWIFI_RX_FRAMES * sizeof(frame_t));
     c->process = dmosi_process_create("dmespwifi", Dmod_GetCurrentModuleName(), NULL);
-    if (c->lock == NULL || c->scan_lock == NULL || c->rx_ready == NULL || c->scan_done == NULL || c->wake == NULL || c->rx_frames == NULL)
+    if (c->lock == NULL || c->scan_lock == NULL || c->power_lock == NULL || c->rx_ready == NULL || c->scan_done == NULL || c->wake == NULL || c->rx_frames == NULL)
     {
         radio_free(c);
         return -ENOMEM;
@@ -350,6 +357,14 @@ int wifi_scan(radio_t *c, dmdrvi_wifi_scan_t *scan)
         return -ENODEV;
     if (dmosi_mutex_lock(c->scan_lock) != 0)
         return -EBUSY;
+    dmosi_mutex_lock(c->lock);
+    started = c->started;                       /* (the radio may have been switched off while this waited for the scan before) */
+    dmosi_mutex_unlock(c->lock);
+    if (!started)
+    {
+        dmosi_mutex_unlock(c->scan_lock);
+        return -ENODEV;
+    }
 
     scan->count = 0;
     int ret = 0;
@@ -461,6 +476,51 @@ int wifi_disconnect(radio_t *c)
     if (started)
         dmespradio_esp_wifi_disconnect();
     return 0;
+}
+
+/* The switch of the radio: esp_wifi_stop() and esp_wifi_start() - the libraries stay initialized (the memory of the radio is not given back
+ * and taken again), the station goes away and comes back. Off drops the connection and the network like wifi_disconnect() */
+int wifi_set_enabled(radio_t *c, bool enabled)
+{
+    if (dmosi_mutex_lock(c->power_lock) != 0)
+        return -EBUSY;
+    dmosi_mutex_lock(c->lock);
+    bool up = c->up, booting = c->booting, started = c->started;
+    dmosi_mutex_unlock(c->lock);
+    int ret = 0;
+    if (!up)
+        ret = booting ? -EBUSY : -ENODEV;
+    else if (enabled && !started)
+    {
+        if (dmespradio_esp_wifi_start() != 0)
+        {
+            radio_log("wifi: the station did not start again\n");
+            ret = -EIO;
+        }
+        else
+        {
+            dmosi_mutex_lock(c->lock);
+            c->started = true;
+            c->state = DMDRVI_WIFI_STATE_IDLE;
+            c->reason = 0;
+            dmosi_mutex_unlock(c->lock);
+        }
+    }
+    else if (!enabled && started)
+    {
+        dmosi_mutex_lock(c->lock);
+        c->started = false;                     /* (first: a scan or a connect that comes now is refused, the events of the stop do not set a state) */
+        c->want_connected = false;
+        memset(&c->sta_config, 0, sizeof(c->sta_config));   /* (the passphrase is not kept) */
+        c->ssid[0] = '\0';
+        c->state = DMDRVI_WIFI_STATE_OFF;
+        c->reason = 0;
+        c->rx_head = c->rx_tail = 0;
+        dmosi_mutex_unlock(c->lock);
+        dmespradio_esp_wifi_stop();             /* (ends a scan that runs, and the link) */
+    }
+    dmosi_mutex_unlock(c->power_lock);
+    return ret;
 }
 
 void wifi_get_status(radio_t *c, dmdrvi_wifi_status_t *status)

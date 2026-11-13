@@ -78,6 +78,11 @@ dmod_dmespwifi_port_api_declaration(1.0, int, _connect, ( const dmdrvi_wifi_conn
     return (g_radio != NULL) ? wifi_connect(g_radio, request) : -ENODEV;
 }
 
+dmod_dmespwifi_port_api_declaration(1.0, int, _set_enabled, ( bool enabled ))
+{
+    return (g_radio != NULL) ? wifi_set_enabled(g_radio, enabled) : -ENODEV;
+}
+
 dmod_dmespwifi_port_api_declaration(1.0, int, _disconnect, ( void ))
 {
     return (g_radio != NULL) ? wifi_disconnect(g_radio) : -ENODEV;

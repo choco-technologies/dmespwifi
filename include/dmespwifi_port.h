@@ -48,6 +48,15 @@ dmod_dmespwifi_port_api(1.0, int, _connect, ( const dmdrvi_wifi_connect_t *reque
 /** @brief Leaves the network (DMDRVI_IOCTL_WIFI_DISCONNECT). */
 dmod_dmespwifi_port_api(1.0, int, _disconnect, ( void ));
 
+/**
+ * @brief Switches the radio off or on (DMDRVI_IOCTL_WIFI_SET_ENABLED).
+ *
+ * Off: the connection is dropped and the network forgotten, the radio stops, the state is DMDRVI_WIFI_STATE_OFF and _scan and _connect
+ * fail with -ENODEV. On: the radio starts again (DMDRVI_WIFI_STATE_IDLE). The port starts with the radio on, and switching to the
+ * state it is in is not an error. 0, -EBUSY while the radio is being started, -ENODEV when it did not start (nothing to switch).
+ */
+dmod_dmespwifi_port_api(1.0, int, _set_enabled, ( bool enabled ));
+
 /** @brief The state of the connection (DMDRVI_IOCTL_WIFI_GET_STATUS). */
 dmod_dmespwifi_port_api(1.0, void, _get_status, ( dmdrvi_wifi_status_t *status ));
 
